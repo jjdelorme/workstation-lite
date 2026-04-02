@@ -1,0 +1,12 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+
+class Settings(BaseSettings):
+    gcp_project_id: Optional[str] = "jasondel-cloudrun10"
+    region: str = "us-central1"
+    cluster_name: str = "workstation-cluster"
+    workstation_image: str = "gitpod/openvscode-server:latest"
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+settings = Settings()

@@ -1,0 +1,11 @@
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+google-cloud-container==2.35.0
+google-cloud-build==3.24.0
+google-cloud-artifact-registry==1.11.1
+kubernetes==29.0.0
+pydantic-settings==2.1.0
+httpx==0.26.0
+google-cloud-compute==1.15.0
+google-cloud-service-usage==1.15.0
+pytest==8.0.0

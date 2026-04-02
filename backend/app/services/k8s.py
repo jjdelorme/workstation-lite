@@ -1,0 +1,492 @@
+from kubernetes import client, config
+import logging
+import os
+import subprocess
+import yaml
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+class K8sManager:
+    def __init__(self):
+        self.api_client = None
+        self.core_api = None
+        self.apps_api = None
+        self._is_ready = False
+        self._last_refresh_time = 0
+        self._refresh_config()
+
+    def _refresh_config(self):
+        import time
+        current_time = time.time()
+        
+        # Refresh if not ready, or if it's been more than 30 minutes (1800 seconds)
+        if self._is_ready and (current_time - self._last_refresh_time < 1800):
+            return
+            
+        self._last_refresh_time = current_time
+            
+        # Try in-cluster first
+        try:
+            logger.info("Checking in-cluster config...")
+            config.load_incluster_config()
+            self.core_api = client.CoreV1Api()
+            self.apps_api = client.AppsV1Api()
+            self._is_ready = True
+            logger.info("In-cluster config loaded")
+            return
+        except config.ConfigException:
+            logger.info("In-cluster config not available")
+            pass
+
+        # Manual fallback logic
+        try:
+            kubeconfig_path = os.path.expanduser("~/.kube/config")
+            logger.info(f"Checking kubeconfig at {kubeconfig_path}")
+            if os.path.exists(kubeconfig_path):
+                with open(kubeconfig_path, "r") as f:
+                    conf = yaml.safe_load(f)
+
+                logger.info("Kubeconfig file loaded")
+                # Check if it uses the gke-gcloud-auth-plugin
+                uses_plugin = False
+                for user_entry in conf.get('users', []):
+                    user_data = user_entry.get('user', {})
+                    cmd = user_data.get('exec', {}).get('command')
+                    if cmd == 'gke-gcloud-auth-plugin' or user_data.get('command') == 'gke-gcloud-auth-plugin':
+                        uses_plugin = True
+                        break
+                
+                if uses_plugin:
+                    logger.info("Detected missing gke-gcloud-auth-plugin, using manual token fallback")
+                    # Find current cluster
+                    curr_context_name = conf.get('current-context')
+                    curr_context = next(c for c in conf['contexts'] if c['name'] == curr_context_name)['context']
+                    curr_cluster = next(c for c in conf['clusters'] if c['name'] == curr_context['cluster'])['cluster']
+                    
+                    host = curr_cluster['server']
+                    ca_data = curr_cluster.get('certificate-authority-data')
+                    
+                    token = subprocess.check_output(
+                        ["gcloud", "auth", "application-default", "print-access-token"],
+                        text=True
+                    ).strip()
+
+                    configuration = client.Configuration()
+                    configuration.host = host
+                    if ca_data:
+                        import base64
+                        import tempfile
+                        ca_cert = tempfile.NamedTemporaryFile(delete=False)
+                        ca_cert.write(base64.b64decode(ca_data))
+                        ca_cert.close()
+                        configuration.ssl_ca_cert = ca_cert.name
+                    
+                    configuration.api_key['authorization'] = f"Bearer {token}"
+                    
+                    self.api_client = client.ApiClient(configuration)
+                    self.core_api = client.CoreV1Api(self.api_client)
+                    self.apps_api = client.AppsV1Api(self.api_client)
+                    self._is_ready = True
+                    logger.info("Successfully initialized K8s client with manual fallback")
+                    return
+        except Exception as fallback_e:
+            logger.error(f"Manual K8s fallback detection failed: {fallback_e}")
+
+        # Try standard kubeconfig as last resort
+        try:
+            config.load_kube_config()
+            self.core_api = client.CoreV1Api()
+            self.apps_api = client.AppsV1Api()
+            self._is_ready = True
+            logger.info("Standard kubeconfig loaded")
+        except Exception as e:
+            logger.error(f"All K8s config methods failed: {e}")
+
+    def ensure_namespace(self, user_ns: str):
+        self._refresh_config()
+        if not self.core_api: return
+        try:
+            self.core_api.read_namespace(name=user_ns)
+        except Exception:
+            try:
+                ns = client.V1Namespace(metadata=client.V1ObjectMeta(name=user_ns))
+                self.core_api.create_namespace(body=ns)
+            except Exception as e:
+                logger.error(f"Failed to create namespace {user_ns}: {e}")
+        
+        # Always try to ensure the image pull secret exists
+        try:
+            token = subprocess.check_output(
+                ["gcloud", "auth", "application-default", "print-access-token"],
+                text=True
+            ).strip()
+            import base64
+            import json
+            auth_config = {
+                "auths": {
+                    "us-central1-docker.pkg.dev": {
+                        "auth": base64.b64encode(f"_token:{token}".encode()).decode()
+                    }
+                }
+            }
+            docker_config_json = base64.b64encode(json.dumps(auth_config).encode()).decode()
+            secret = client.V1Secret(
+                metadata=client.V1ObjectMeta(name="artifact-registry-key"),
+                type="kubernetes.io/dockerconfigjson",
+                data={".dockerconfigjson": docker_config_json}
+            )
+            try:
+                self.core_api.read_namespaced_secret(name="artifact-registry-key", namespace=user_ns)
+                self.core_api.replace_namespaced_secret(name="artifact-registry-key", namespace=user_ns, body=secret)
+            except Exception:
+                self.core_api.create_namespaced_secret(namespace=user_ns, body=secret)
+        except Exception as e:
+            logger.error(f"Failed to ensure image pull secret in {user_ns}: {e}")
+
+    def apply_pvc(self, user_ns: str, name: str, size: str = "10Gi"):
+        self._refresh_config()
+        if not self.core_api: return
+        pvc = client.V1PersistentVolumeClaim(
+            metadata=client.V1ObjectMeta(name=name),
+            spec=client.V1PersistentVolumeClaimSpec(
+                access_modes=["ReadWriteOnce"],
+                resources=client.V1ResourceRequirements(requests={"storage": size}),
+                storage_class_name="standard-rwo"
+            )
+        )
+        try:
+            self.core_api.read_namespaced_persistent_volume_claim(name=name, namespace=user_ns)
+            logger.info(f"PVC {name} already exists in {user_ns}")
+        except Exception:
+            try:
+                self.core_api.create_namespaced_persistent_volume_claim(namespace=user_ns, body=pvc)
+            except Exception as e:
+                logger.error(f"Failed to create PVC {name} in {user_ns}: {e}")
+
+    def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None):
+        if ports is None:
+            ports = [3000]
+        self._refresh_config()
+        if not self.apps_api: return
+        
+        container_ports = [client.V1ContainerPort(container_port=p) for p in ports]
+        
+        sts = client.V1StatefulSet(
+            metadata=client.V1ObjectMeta(
+                name=name,
+                labels={
+                    "app": name,
+                    "managed-by": "workstation-lite"
+                }
+            ),
+            spec=client.V1StatefulSetSpec(
+                replicas=replicas,
+                selector=client.V1LabelSelector(match_labels={"app": name}),
+                service_name=name,
+                template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(labels={"app": name}),
+                    spec=client.V1PodSpec(
+                        security_context=client.V1PodSecurityContext(
+                            fs_group=1000
+                        ),
+                        image_pull_secrets=[client.V1LocalObjectReference(name="artifact-registry-key")],
+                        init_containers=[
+                            client.V1Container(
+                                name="fix-permissions",
+                                image="busybox",
+                                command=["sh", "-c", "chown -R 1000:1000 /home/workspace"],
+                                security_context=client.V1SecurityContext(
+                                    run_as_user=0
+                                ),
+                                volume_mounts=[
+                                    client.V1VolumeMount(name="home", mount_path="/home/workspace")
+                                ]
+                            )
+                        ],
+                        containers=[
+                            client.V1Container(
+                                name=name,
+                                image=image,
+                                ports=container_ports,
+                                resources=client.V1ResourceRequirements(
+                                    requests={
+                                        "cpu": "500m",
+                                        "memory": "2Gi"
+                                    }
+                                ),
+                                volume_mounts=[
+                                    client.V1VolumeMount(name="home", mount_path="/home/workspace")
+                                ]
+                            )
+                        ],
+                        volumes=[
+                            client.V1Volume(
+                                name="home",
+                                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=f"{name}-pvc")
+                            )
+                        ]
+                    )
+                )
+            )
+        )
+        try:
+            self.apps_api.read_namespaced_stateful_set(name=name, namespace=user_ns)
+            # Use replace instead of patch if patch isn't working as expected
+            self.apps_api.replace_namespaced_stateful_set(name=name, namespace=user_ns, body=sts)
+        except Exception:
+            try:
+                self.apps_api.create_namespaced_stateful_set(namespace=user_ns, body=sts)
+            except Exception as e:
+                logger.error(f"Failed to create StatefulSet {name} in {user_ns}: {e}")
+
+    def scale_workstation(self, user_ns: str, name: str, replicas: int):
+        self._refresh_config()
+        if not self.apps_api: return
+        body = client.V1Scale(
+            spec=client.V1ScaleSpec(replicas=replicas)
+        )
+        try:
+            self.apps_api.patch_namespaced_stateful_set_scale(name=name, namespace=user_ns, body=body)
+        except Exception as e:
+            logger.error(f"Failed to scale {name} in {user_ns}: {e}")
+    def get_workstation_status(self, user_ns: str, name: str) -> dict:
+        self._refresh_config()
+        if not self.apps_api or not self.core_api: 
+            return {"status": "UNKNOWN", "pod_name": None, "pod_ready": False}
+        try:
+            sts = self.apps_api.read_namespaced_stateful_set(name=name, namespace=user_ns)
+            
+            status = "UNKNOWN"
+            pod_ready = False
+            pod_name = f"{name}-0"
+            error_message = None
+            
+            # Check for Pod specific status to detect errors early
+            try:
+                pod = self.core_api.read_namespaced_pod(name=pod_name, namespace=user_ns)
+                if pod.status.container_statuses:
+                    container_status = pod.status.container_statuses[0]
+                    state = container_status.state
+                    
+                    if state.waiting:
+                        reason = state.waiting.reason
+                        if reason in ["ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"]:
+                            status = "ERROR"
+                            error_message = f"Pod Error: {reason} - {state.waiting.message or 'Check logs'}"
+                    elif state.terminated:
+                        if state.terminated.exit_code != 0:
+                            status = "ERROR"
+                            error_message = f"Pod Terminated with exit code {state.terminated.exit_code}: {state.terminated.reason}"
+            except Exception:
+                pass # Pod might not be created yet if STS just started
+
+            if status != "ERROR":
+                if sts.status.ready_replicas and sts.status.ready_replicas > 0:
+                    status = "RUNNING"
+                    pod_ready = True
+                elif sts.spec.replicas == 0:
+                    status = "STOPPED"
+                else:
+                    status = "PROVISIONING"
+                
+            return {
+                "status": status,
+                "pod_name": pod_name,
+                "pod_ready": pod_ready,
+                "message": error_message
+            }
+        except Exception as e:
+            if hasattr(e, 'status') and e.status == 404:
+                return {"status": "STOPPED", "pod_name": None, "pod_ready": False}
+            if "404" in str(e):
+                return {"status": "STOPPED", "pod_name": None, "pod_ready": False}
+            logger.error(f"Error getting workstation status for {user_ns}/{name}: {e}")
+            return {"status": "UNKNOWN", "pod_name": None, "pod_ready": False}
+
+
+    def list_workstations(self, user_ns: str) -> list[dict]:
+        self._refresh_config()
+        if not self.apps_api: return []
+        try:
+            # 1. Get existing StatefulSets - These are our ACTUAL instances
+            stss = self.apps_api.list_namespaced_stateful_set(
+                namespace=user_ns,
+                label_selector="managed-by=workstation-lite"
+            )
+            workstations = []
+            for sts in stss.items:
+                name = sts.metadata.name
+                status_info = self.get_workstation_status(user_ns, name)
+                status_info["name"] = name
+                try:
+                    status_info["image"] = sts.spec.template.spec.containers[0].image
+                except (IndexError, AttributeError):
+                    status_info["image"] = "unknown"
+                workstations.append(status_info)
+
+            # We DO NOT merge with ConfigMap here. 
+            # Workstations tab = Live Instances. 
+            # Images tab = ConfigMap Recipes.
+            return workstations
+        except Exception as e:
+            logger.error(f"Error listing workstations in {user_ns}: {e}")
+            return []
+
+    def save_image_dockerfile(self, user_ns: str, image_name: str, dockerfile: str):
+        self._refresh_config()
+        if not self.core_api: return
+        cm_name = "image-dockerfiles"
+        try:
+            try:
+                cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+                if not cm.data: cm.data = {}
+                cm.data[image_name] = dockerfile
+                self.core_api.patch_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+            except Exception:
+                cm = client.V1ConfigMap(
+                    metadata=client.V1ObjectMeta(name=cm_name),
+                    data={image_name: dockerfile}
+                )
+                self.core_api.create_namespaced_config_map(namespace=user_ns, body=cm)
+        except Exception as e:
+            logger.error(f"Failed to save dockerfile for {image_name} in {user_ns}: {e}")
+
+    def delete_image_config(self, user_ns: str, image_name: str):
+        self._refresh_config()
+        if not self.core_api: return
+
+        # Remove from image-dockerfiles
+        try:
+            cm_name = "image-dockerfiles"
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            if cm.data and image_name in cm.data:
+                del cm.data[image_name]
+                if not cm.data: cm.data = {}
+                self.core_api.replace_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+        except Exception as e:
+            logger.info(f"Could not delete {image_name} from image-dockerfiles: {e}")
+    def get_image_dockerfile(self, user_ns: str, image_name: str) -> Optional[str]:
+        self._refresh_config()
+        if not self.core_api: return None
+        cm_name = "image-dockerfiles"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            return cm.data.get(image_name)
+        except Exception:
+            return None
+
+    def delete_workstation(self, user_ns: str, name: str, delete_pvc: bool = False):
+        self._refresh_config()
+        if not self.apps_api or not self.core_api: return
+        
+        # 1. Delete StatefulSet
+        try:
+            self.apps_api.delete_namespaced_stateful_set(name=name, namespace=user_ns)
+            logger.info(f"Deleted StatefulSet {name} in {user_ns}")
+        except Exception as e:
+            if not (hasattr(e, 'status') and e.status == 404):
+                logger.error(f"Failed to delete StatefulSet {name} in {user_ns}: {e}")
+
+        # 2. Optionally delete PVC
+        if delete_pvc:
+            pvc_name = f"{name}-pvc"
+            try:
+                self.core_api.delete_namespaced_persistent_volume_claim(name=pvc_name, namespace=user_ns)
+                logger.info(f"Deleted PVC {pvc_name} in {user_ns}")
+            except Exception as e:
+                if not (hasattr(e, 'status') and e.status == 404):
+                    logger.error(f"Failed to delete PVC {pvc_name} in {user_ns}: {e}")
+
+        # 3. Remove from config - This ensures it doesn't show up in the "Instances" list as STOPPED
+        self.delete_workstation_config(user_ns, name)
+
+    def delete_workstation_config(self, user_ns: str, workstation_name: str):
+        self._refresh_config()
+        if not self.core_api: return
+        cm_name = "workstation-configs"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            if cm.data and workstation_name in cm.data:
+                del cm.data[workstation_name]
+                if not cm.data: cm.data = {}
+                self.core_api.replace_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+                logger.info(f"Removed config for {workstation_name} in {user_ns}")
+        except Exception as e:
+            if not (hasattr(e, 'status') and e.status == 404):
+                logger.error(f"Failed to delete config for {workstation_name} in {user_ns}: {e}")
+
+    def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None):
+        if ports is None:
+            ports = [3000]
+        self._refresh_config()
+        if not self.core_api: return
+        import json
+        cm_name = "workstation-configs"
+        config_data = json.dumps({"image": image, "ports": ports})
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            if not cm.data: cm.data = {}
+            cm.data[workstation_name] = config_data
+            self.core_api.patch_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+        except Exception:
+            cm = client.V1ConfigMap(
+                metadata=client.V1ObjectMeta(name=cm_name),
+                data={workstation_name: config_data}
+            )
+            try:
+                self.core_api.create_namespaced_config_map(namespace=user_ns, body=cm)
+            except Exception as e:
+                logger.error(f"Failed to save config in {user_ns}: {e}")
+
+    def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
+        self._refresh_config()
+        default_config = {"image": None, "ports": [3000]}
+        if not self.core_api: return default_config
+        cm_name = "workstation-configs"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            val = cm.data.get(workstation_name)
+            if not val:
+                return default_config
+            import json
+            try:
+                parsed = json.loads(val)
+                return {"image": parsed.get("image"), "ports": parsed.get("ports", [3000])}
+            except json.JSONDecodeError:
+                # Backwards compatibility for old config format
+                return {"image": val, "ports": [3000]}
+        except Exception:
+            return default_config
+
+    def get_pvc_volume_handle(self, user_ns: str, pvc_name: str) -> Optional[str]:
+        self._refresh_config()
+        if not self.core_api: return None
+        try:
+            pvc = self.core_api.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=user_ns)
+            pv_name = pvc.spec.volume_name
+            if not pv_name:
+                return None
+            pv = self.core_api.read_persistent_volume(name=pv_name)
+            return pv.spec.csi.volume_handle
+        except Exception as e:
+            logger.error(f"Error getting volume handle for PVC {pvc_name}: {e}")
+            return None
+
+    def scale_down_idle_workstations(self) -> list:
+        self._refresh_config()
+        scaled_namespaces = []
+        if not self.apps_api: return scaled_namespaces
+        try:
+            stss = self.apps_api.list_stateful_set_for_all_namespaces(label_selector="app=workstation")
+            for sts in stss.items:
+                if sts.spec.replicas and sts.spec.replicas > 0:
+                    ns = sts.metadata.namespace
+                    name = sts.metadata.name
+                    self.scale_workstation(ns, name, 0)
+                    scaled_namespaces.append(ns)
+        except Exception as e:
+            logger.error(f"Error scaling down idle workstations: {e}")
+        return scaled_namespaces
+
+k8s_manager = K8sManager()
