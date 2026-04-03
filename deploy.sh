@@ -18,7 +18,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --region "$REGION" \
     --project "$PROJECT_ID" \
-    --allow-unauthenticated \
+    --no-allow-unauthenticated \
     --port 8080
 
 echo "✅ Deployment complete!"

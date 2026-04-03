@@ -35,7 +35,7 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
   useEffect(() => {
     if (workstation) {
       setSelectedImage(workstation.image || '');
-      setPortsStr(workstation.ports?.join(', ') || '3000');
+      setPortsStr(workstation.ports?.join(', ') || '');
       setCpu(workstation.cpu || '500m');
       setMemory(workstation.memory || '2Gi');
       setDiskSize(workstation.disk_size || '10Gi');
@@ -53,7 +53,7 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
       const imageChanged = selectedImage && selectedImage !== workstation.image;
       onConfirm(
         workstation.name,
-        ports.length > 0 ? ports : [3000],
+        ports,
         cpu,
         memory,
         diskSize,

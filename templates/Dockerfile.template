@@ -4,7 +4,7 @@ FROM linuxserver/vscodium-web:latest
 # Added openssh-server so we can configure sshd_config
 RUN apt-get update && apt-get install -y \                                                                  
     curl git wget zsh vim tmux jq build-essential \
-    python3 python3-pip golang-go fontconfig sudo locales openssh-server \
+    python3 python3-pip python3.12-venv golang-go fontconfig sudo locales openssh-server \
     && rm -rf /var/lib/apt/lists/*                                                                                                                                                                                          
                                                                                                                                                                                                                                
 # Generate and set locales (Essential for Powerlevel10k, Zsh encoding, and Tmux)
@@ -74,9 +74,11 @@ RUN mkdir -p /etc/zsh && \
 RUN echo 'set -g default-terminal "screen-256color"' > /etc/tmux.conf && \
     echo 'set -g default-shell /bin/zsh' >> /etc/tmux.conf
 
-# 9. Configure SSHD to Accept Env 
+# 9. Configure SSHD to Accept Env and Force abc User
 RUN mkdir -p /run/sshd /etc/ssh && \
-    echo "AcceptEnv LANG LC_*" >> /etc/ssh/sshd_config || true
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    echo "AcceptEnv LANG LC_*" >> /etc/ssh/sshd_config && \
+    echo "AllowUsers abc" >> /etc/ssh/sshd_config
 
 # 10. Finalize User Setup
 RUN usermod -d /home/workspace -m abc && \

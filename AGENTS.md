@@ -49,6 +49,12 @@ npm run build        # Production build (tsc -b && vite build)
 npm run lint         # ESLint
 ```
 
+**Important:** The backend serves the frontend from `backend/app/static/`, not from `frontend/dist/`. After rebuilding the frontend, copy the output to the backend:
+```bash
+rm -rf backend/app/static && cp -r frontend/dist backend/app/static
+```
+This allows you to update the UI without restarting the backend server — just refresh the browser.
+
 ### Tests
 ```bash
 cd backend && pytest                              # All backend tests
@@ -58,7 +64,22 @@ cd backend && pytest tests/test_foo.py::test_bar  # Single test
 
 ### Deployment
 ```bash
-./deploy.sh   # Builds Docker image and deploys to Cloud Run
+./deploy.sh   # Builds Docker image and deploys to Cloud Run (requires authentication)
+```
+
+### Access Control
+The Cloud Run service requires authentication (no public access). To grant a user access:
+```bash
+gcloud run services add-iam-policy-binding workstation-lite \
+  --region us-central1 \
+  --member="user:someone@example.com" \
+  --role="roles/run.invoker"
+```
+
+To access the app in a browser, use the Cloud Run proxy (injects auth tokens automatically):
+```bash
+gcloud run services proxy workstation-lite --region us-central1 --port 3333
+# Then open http://localhost:3333
 ```
 
 ## Development Conventions
@@ -68,6 +89,5 @@ cd backend && pytest tests/test_foo.py::test_bar  # Single test
 
 ## Important Notes & Gotchas
 - **Segfault Fix:** `main.py` sets `CLOUDSDK_CONTEXT_AWARE_USE_CLIENT_CERTIFICATE=false` and `GOOGLE_API_USE_CLIENT_CERTIFICATE=false` at module load. This prevents fatal segmentation faults during mTLS cert provider execution. **Do not remove these lines or move them after GCP imports.**
-- `start.sh` is a local utility for port-forwarding and connecting to a running workstation pod via `kubectl`.
 - `nuke_everything.py` destroys all project resources. Use with extreme caution.
 - Root-level `test_*.py` files are ad-hoc integration/debugging scripts and are **not** part of the formal test suite (which lives in `backend/tests/`).

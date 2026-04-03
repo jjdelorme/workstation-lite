@@ -115,9 +115,13 @@ function App() {
       if (response.ok) {
         const data: WorkstationListResponse = await response.json();
         setWorkstations(data.workstations);
+      } else {
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setNotification({ type: 'error', msg: `Failed to fetch workstations: ${data.detail || response.statusText}` });
       }
     } catch (error) {
       console.error("Failed to fetch workstations:", error);
+      setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
   };
 
@@ -130,9 +134,13 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setAvailableImages(data);
+      } else {
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setNotification({ type: 'error', msg: `Failed to fetch images: ${data.detail || response.statusText}` });
       }
     } catch (error) {
       console.error("Failed to fetch images:", error);
+      setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
   };
 
@@ -147,11 +155,14 @@ function App() {
         setClusterStatus(data.status);
         setClusterMessage(data.message || null);
       } else {
-        setClusterStatus("UNKNOWN");
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setClusterStatus("ERROR");
+        setClusterMessage(data.detail || `HTTP ${response.status}: ${response.statusText}`);
       }
     } catch (error) {
       console.error("Failed to fetch cluster status:", error);
       setClusterStatus("OFFLINE");
+      setClusterMessage(`Failed to connect to backend: ${error}`);
     } finally {
       setLoading(false);
     }
@@ -166,9 +177,13 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setAppConfig(data);
+      } else {
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setNotification({ type: 'error', msg: `Failed to fetch config: ${data.detail || response.statusText}` });
       }
     } catch (error) {
       console.error("Failed to fetch config:", error);
+      setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
   };
 
@@ -181,9 +196,13 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setClusterNodes(data.nodes || []);
+      } else {
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setNotification({ type: 'error', msg: `Failed to fetch nodes: ${data.detail || response.statusText}` });
       }
     } catch (error) {
       console.error("Failed to fetch nodes:", error);
+      setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
   };
 
@@ -193,9 +212,13 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setAdcExists(data.exists);
+      } else {
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setNotification({ type: 'error', msg: `Failed to fetch ADC status: ${data.detail || response.statusText}` });
       }
     } catch (error) {
       console.error("Failed to fetch ADC status:", error);
+      setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
   };
 
@@ -484,6 +507,7 @@ function App() {
   const isClusterProvisioning = clusterStatus === 'PROVISIONING' || clusterStatus === 'RECONCILING';
   const noCluster = clusterStatus === 'NOT_FOUND';
   const hasError = clusterStatus === 'ERROR';
+  const isOffline = clusterStatus === 'OFFLINE' || clusterStatus === 'UNKNOWN';
 
   if (loading) {
     return (
@@ -541,6 +565,12 @@ function App() {
               }
             >
               {clusterMessage || "GKE API or Cluster error detected."}
+            </Alert>
+          )}
+
+          {isOffline && (
+            <Alert severity="error" variant="filled" sx={{ mb: 4 }}>
+              Unable to connect to backend or cluster. {clusterMessage || 'Check that the backend server is running and your GCP credentials are valid.'}
             </Alert>
           )}
 
@@ -909,7 +939,6 @@ function App() {
                       {availableImages.map((img) => {
                         const isBuilding = img.build_status && !TERMINAL_BUILD_STATUSES.includes(img.build_status);
                         const isBuildFailed = img.build_status && ['FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED', 'EXPIRED'].includes(img.build_status);
-                        const isBuildSuccess = img.build_status === 'SUCCESS';
 
                         return (
                           <ListItem

@@ -353,7 +353,7 @@ def save_workstation_config_endpoint(user_ns: str, name: str, req: SaveConfigReq
     try:
         current_config = get_k8s_manager().get_workstation_config(user_ns, name)
         image = req.image if req.image else current_config.get("image")
-        ports = req.ports if req.ports is not None else current_config.get("ports", [3000])
+        ports = req.ports if req.ports is not None else current_config.get("ports", [])
         cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "500m")
         memory = req.memory if req.memory is not None else current_config.get("memory", "2Gi")
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "10Gi")
@@ -370,7 +370,7 @@ def list_all_workstations(user_ns: str):
     workstations = []
     for w in res:
         config = get_k8s_manager().get_workstation_config(user_ns, w["name"])
-        ports = config.get("ports", [3000]) if isinstance(config, dict) else [3000]
+        ports = config.get("ports", []) if isinstance(config, dict) else []
         workstations.append(
             WorkstationResponse(
                 name=w["name"],
@@ -398,7 +398,7 @@ def start_named_workstation(user_ns: str, name: str):
         # 2. Read workstation config
         config = get_k8s_manager().get_workstation_config(user_ns, name)
         custom_image = config.get("image") if isinstance(config, dict) else config
-        ports = config.get("ports", [3000]) if isinstance(config, dict) else [3000]
+        ports = config.get("ports", []) if isinstance(config, dict) else []
         cpu = config.get("cpu", "500m")
         memory = config.get("memory", "2Gi")
         disk_size = config.get("disk_size", "10Gi")
@@ -498,11 +498,28 @@ def get_connect_script(user_ns: str, name: str, request: Request):
         region = settings.region
         
         config = get_k8s_manager().get_workstation_config(user_ns, name)
-        ports = config.get("ports", [3000]) if isinstance(config, dict) else [3000]
-        
-        lsof_full = f"lsof " + " ".join([f"-ti:{p}" for p in ports]) + f" | xargs kill -9 2>/dev/null || true"
-        
-        pf_args = " ".join([f"{p}:{p}" for p in ports])
+        ports = config.get("ports", []) if isinstance(config, dict) else []
+
+        if ports:
+            lsof_full = "lsof " + " ".join([f"-ti:{p}" for p in ports]) + " | xargs kill -9 2>/dev/null || true"
+            pf_args = " ".join([f"{p}:{p}" for p in ports])
+            port_forward_block = f"""
+echo "Starting port-forwarding ({','.join(map(str, ports))}) and launching terminal..."
+# Kill any existing port-forward to {','.join(map(str, ports))}
+{lsof_full}
+
+# Start port-forward in background using token-based auth to bypass plugin
+kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify port-forward pod/{name}-0 {pf_args} -n {user_ns} > /dev/null 2>&1 &
+PF_PID=$!
+
+# Trap exit to kill port-forward
+trap "kill $PF_PID" EXIT
+
+# Wait for port-forward
+sleep 2
+"""
+        else:
+            port_forward_block = ""
 
         script = f"""#!/bin/bash
 # Magic Connect Script for Workstation Lite
@@ -525,21 +542,7 @@ if ! command -v kubectl &> /dev/null; then
     chmod +x kubectl
     mv kubectl $TEMP_BIN_DIR/
 fi
-
-echo "Starting port-forwarding ({','.join(map(str, ports))}) and launching terminal..."
-# Kill any existing port-forward to {','.join(map(str, ports))}
-{lsof_full}
-
-# Start port-forward in background using token-based auth to bypass plugin
-kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify port-forward pod/{name}-0 {pf_args} -n {user_ns} > /dev/null 2>&1 &
-PF_PID=$!
-
-# Trap exit to kill port-forward
-trap "kill $PF_PID" EXIT
-
-# Wait for port-forward
-sleep 2
-
+{port_forward_block}
 echo "Connecting to shell..."
 # Try ZSH first (custom image), fallback to BASH
 if kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec pod/{name}-0 -n {user_ns} -- which zsh &>/dev/null; then
@@ -548,7 +551,7 @@ else
     SHELL_BIN="/bin/bash"
 fi
 
-kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- $SHELL_BIN < /dev/tty
+kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- su -l abc -s $SHELL_BIN < /dev/tty
 """
         return script
     except Exception as e:
