@@ -206,7 +206,7 @@ def list_available_images(user_ns: str = "user-1"):
         if not settings.gcp_project_id:
             return []
             
-        # 1. Get physical images from Artifact Registry (Already filtered for tags)
+        # 1. Get physical images from Artifact Registry
         ar = get_ar_manager()
         physical_images = ar.list_images(
             settings.gcp_project_id,
@@ -214,53 +214,61 @@ def list_available_images(user_ns: str = "user-1"):
             "workstation-images"
         )
         
-        # 2. Get saved configurations (Templates/Recipes) from ConfigMap
-        k8s = get_k8s_manager()
-        recipes = {}
-        
-        # Check 'image-dockerfiles' (raw source)
-        try:
-            sources_cm = k8s.core_api.read_namespaced_config_map(name="image-dockerfiles", namespace=user_ns)
-            if sources_cm.data:
-                for name in sources_cm.data.keys():
-                    if name in recipes:
-                        recipes[name]["has_dockerfile"] = True
-                    else:
-                        # Draft recipe with no build yet
-                        recipes[name] = {
-                            "uri": None,
-                            "tags": [name],
-                            "update_time": None,
-                            "is_recipe": True,
-                            "has_dockerfile": True
-                        }
-        except Exception: pass
-
-        # 3. Merge and Enrich
-        final_list = []
-        seen_uris = set()
-
+        # Helper to get the base URI (without tags/shas)
         def get_base_uri(uri):
             if not uri: return ""
             return uri.split('@')[0].split(':')[0]
 
+        # Map physical images by their base URI for quick lookup
         physical_by_base = {}
         for img in physical_images:
             base = get_base_uri(img["uri"])
+            # Keep the newest version if multiple exist
             if base not in physical_by_base or (img.get("update_time") and physical_by_base[base].get("update_time") and img["update_time"] > physical_by_base[base]["update_time"]):
                 physical_by_base[base] = img
 
-        # Add all our intentional Recipes first
-        for name, data in recipes.items():
-            base_uri = get_base_uri(data["uri"])
-            if base_uri in physical_by_base:
-                match = physical_by_base[base_uri]
-                data["update_time"] = match["update_time"]
-                data["uri"] = match["uri"]
-                seen_uris.add(base_uri)
-            final_list.append(data)
+        # 2. Get saved configurations (Templates/Recipes) from ConfigMap
+        k8s = get_k8s_manager()
+        recipe_names = []
+        
+        try:
+            sources_cm = k8s.core_api.read_namespaced_config_map(name="image-dockerfiles", namespace=user_ns)
+            if sources_cm.data:
+                recipe_names = list(sources_cm.data.keys())
+        except Exception: 
+            pass
 
-        # Add any remaining physical images that aren't mapped to a recipe (orphan artifacts)
+        # 3. Merge and Enrich
+        final_list = []
+        seen_uris = set()
+        
+        # Base path for this project's images in AR
+        ar_repo_base = f"{settings.region}-docker.pkg.dev/{settings.gcp_project_id}/workstation-images"
+
+        # Add all our intentional Recipes first
+        for name in recipe_names:
+            # Calculate what the URI SHOULD be if it were built
+            expected_name = f"{user_ns}-{name}".lower().replace("_", "-")
+            expected_base_uri = f"{ar_repo_base}/{expected_name}"
+            
+            recipe_data = {
+                "uri": None,
+                "tags": [name],
+                "update_time": None,
+                "is_recipe": True,
+                "has_dockerfile": True
+            }
+
+            # Check if we have a matching physical image in the registry
+            if expected_base_uri in physical_by_base:
+                match = physical_by_base[expected_base_uri]
+                recipe_data["uri"] = match["uri"]
+                recipe_data["update_time"] = match["update_time"]
+                seen_uris.add(expected_base_uri)
+            
+            final_list.append(recipe_data)
+
+        # 4. Add any remaining physical images that aren't mapped to a recipe (orphan artifacts)
         for base, img in physical_by_base.items():
             if base not in seen_uris:
                 repo_path = base.split('/')[-1]
