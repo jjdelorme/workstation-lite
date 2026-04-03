@@ -1,0 +1,26 @@
+# Include the default .gitignore entries
+#!include:.gitignore
+
+# Documentation
+*.md
+plans/
+
+# Ad-hoc test/debug scripts (not needed for build)
+test_*.py
+cleanup_ghost.py
+diagnose_pod.py
+diagnose_sync.py
+inspect_ar.py
+nuke_everything.py
+start.sh
+
+# Templates (workstation image templates, not the app)
+templates/
+
+# Git
+.git/
+.gitignore
+
+# IDE / editor
+.vscode/
+.idea/
