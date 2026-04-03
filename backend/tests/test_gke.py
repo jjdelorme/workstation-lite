@@ -33,6 +33,6 @@ def test_create_autopilot_cluster(mock_client_class):
     
     # Check that create_cluster was called with autopilot enabled
     args, kwargs = mock_client.create_cluster.call_args
-    cluster_obj = kwargs['cluster']
+    cluster_obj = kwargs['request']['cluster']
     assert cluster_obj.autopilot.enabled is True
     assert cluster_obj.name == "cluster"

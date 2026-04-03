@@ -75,7 +75,7 @@ const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile
         clearInterval(interval);
       }
     };
-  }, [activeBuild?.id, activeBuild?.status]);
+  }, [activeBuild, onBuildSuccess]);
 
   const handleBuild = async () => {
     if (!name.trim()) {

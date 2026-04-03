@@ -21,7 +21,7 @@ def test_save_config_optional_image(mock_get_k8s_manager):
     
     assert response.status_code == 200
     # Verify save_workstation_config was called with old image and new ports
-    mock_k8s.save_workstation_config.assert_called_with("user-1", "test-ws", "old-image", [8080, 9090])
+    mock_k8s.save_workstation_config.assert_called_with("user-1", "test-ws", "old-image", [8080, 9090], '500m', '2Gi', '10Gi', None, {})
 
 @patch("app.api.workstations.get_k8s_manager")
 def test_save_config_with_image(mock_get_k8s_manager):
@@ -38,4 +38,4 @@ def test_save_config_with_image(mock_get_k8s_manager):
     )
     
     assert response.status_code == 200
-    mock_k8s.save_workstation_config.assert_called_with("user-1", "test-ws", "new-image", [8080])
+    mock_k8s.save_workstation_config.assert_called_with("user-1", "test-ws", "new-image", [8080], '500m', '2Gi', '10Gi', None, {})

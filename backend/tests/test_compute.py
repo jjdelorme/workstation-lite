@@ -11,6 +11,6 @@ def test_create_disk_snapshot(mock_client_class):
     
     assert mock_client.insert.called
     args, kwargs = mock_client.insert.call_args
-    assert kwargs['project'] == "proj"
-    assert kwargs['snapshot_resource'].name == "snap"
-    assert "disks/disk" in kwargs['snapshot_resource'].source_disk
+    assert kwargs['request']['project'] == "proj"
+    assert kwargs['request']['snapshot_resource'].name == "snap"
+    assert "disks/disk" in kwargs['request']['snapshot_resource'].source_disk

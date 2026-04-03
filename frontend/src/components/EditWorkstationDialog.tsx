@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography, Divider, FormControlLabel, Checkbox, IconButton, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
@@ -24,26 +24,16 @@ interface EditWorkstationDialogProps {
 }
 
 const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onClose, onConfirm, workstation, availableImages }) => {
-  const [selectedImage, setSelectedImage] = useState('');
-  const [portsStr, setPortsStr] = useState('');
-  const [cpu, setCpu] = useState('500m');
-  const [memory, setMemory] = useState('2Gi');
-  const [diskSize, setDiskSize] = useState('10Gi');
-  const [gpuEnabled, setGpuEnabled] = useState(false);
-  const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>([]);
-
-  useEffect(() => {
-    if (workstation) {
-      setSelectedImage(workstation.image || '');
-      setPortsStr(workstation.ports?.join(', ') || '');
-      setCpu(workstation.cpu || '500m');
-      setMemory(workstation.memory || '2Gi');
-      setDiskSize(workstation.disk_size || '10Gi');
-      setGpuEnabled(!!workstation.gpu);
-      const ev = workstation.env_vars || {};
-      setEnvEntries(Object.entries(ev).map(([key, value]) => ({ key, value })));
-    }
-  }, [workstation]);
+  const [selectedImage, setSelectedImage] = useState(workstation?.image || '');
+  const [portsStr, setPortsStr] = useState(workstation?.ports?.join(', ') || '');
+  const [cpu, setCpu] = useState(workstation?.cpu || '500m');
+  const [memory, setMemory] = useState(workstation?.memory || '2Gi');
+  const [diskSize, setDiskSize] = useState(workstation?.disk_size || '10Gi');
+  const [gpuEnabled, setGpuEnabled] = useState(!!workstation?.gpu);
+  const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>(() => {
+    const ev = workstation?.env_vars || {};
+    return Object.entries(ev).map(([key, value]) => ({ key, value }));
+  });
 
   const handleConfirm = () => {
     if (workstation) {

@@ -1,5 +1,5 @@
 import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -77,6 +77,8 @@ interface ClusterNode {
   ready: boolean;
 }
 
+const user_ns = "user-1";
+
 function App() {
   const [workstations, setWorkstations] = useState<WorkstationStatus[]>([]);
   const [availableImages, setAvailableImages] = useState<ImageMetadata[]>([]);
@@ -106,9 +108,7 @@ function App() {
   const [adcExists, setAdcExists] = useState(false);
   const [adcJson, setAdcJson] = useState('');
 
-  const user_ns = "user-1";
-
-  const fetchWorkstations = async () => {
+  const fetchWorkstations = useCallback(async () => {
     try {
       const response = await fetch(`/api/workstations/${user_ns}/list`, {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
@@ -125,9 +125,9 @@ function App() {
       console.error("Failed to fetch workstations:", error);
       setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
-  };
+  }, []);
 
-  const fetchImages = async () => {
+  const fetchImages = useCallback(async () => {
     try {
       const response = await fetch('/api/workstations/images', {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
@@ -144,9 +144,9 @@ function App() {
       console.error("Failed to fetch images:", error);
       setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
-  };
+  }, []);
 
-  const fetchClusterStatus = async () => {
+  const fetchClusterStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/workstations/cluster-status', {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
@@ -168,9 +168,9 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     try {
       const response = await fetch('/api/workstations/config', {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
@@ -187,9 +187,9 @@ function App() {
       console.error("Failed to fetch config:", error);
       setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
-  };
+  }, []);
 
-  const fetchNodes = async () => {
+  const fetchNodes = useCallback(async () => {
     try {
       const response = await fetch('/api/workstations/nodes', {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
@@ -206,9 +206,9 @@ function App() {
       console.error("Failed to fetch nodes:", error);
       setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
-  };
+  }, []);
 
-  const fetchAdcStatus = async () => {
+  const fetchAdcStatus = useCallback(async () => {
     try {
       const response = await fetch(`/api/workstations/${user_ns}/adc-secret`);
       if (response.ok) {
@@ -222,9 +222,9 @@ function App() {
       console.error("Failed to fetch ADC status:", error);
       setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
     }
-  };
+  }, []);
 
-  const fetchServices = async () => {
+  const fetchServices = useCallback(async () => {
     try {
       const response = await fetch(`/api/services/${user_ns}/list`, {
         headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
@@ -237,9 +237,9 @@ function App() {
     } catch (error) {
       console.error("Failed to fetch services:", error);
     }
-  };
+  }, []);
 
-  const fetchServiceCatalog = async () => {
+  const fetchServiceCatalog = useCallback(async () => {
     try {
       const response = await fetch('/api/services/catalog');
       if (response.ok) {
@@ -249,9 +249,9 @@ function App() {
     } catch (error) {
       console.error("Failed to fetch service catalog:", error);
     }
-  };
+  }, []);
 
-  const fetchAll = () => {
+  const fetchAll = useCallback(() => {
     fetchWorkstations();
     fetchImages();
     fetchClusterStatus();
@@ -260,7 +260,7 @@ function App() {
     fetchAdcStatus();
     fetchServices();
     fetchServiceCatalog();
-  };
+  }, [fetchWorkstations, fetchImages, fetchClusterStatus, fetchConfig, fetchNodes, fetchAdcStatus, fetchServices, fetchServiceCatalog]);
 
   const TERMINAL_BUILD_STATUSES = ['SUCCESS', 'FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED', 'EXPIRED'];
 
@@ -277,7 +277,7 @@ function App() {
       fetchNodes();
     }, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchAll, fetchWorkstations, fetchClusterStatus, fetchNodes]);
 
   // Poll images when there are active builds
   useEffect(() => {
@@ -286,7 +286,7 @@ function App() {
       fetchImages();
     }, 5000);
     return () => clearInterval(interval);
-  }, [hasActiveBuilds]);
+  }, [hasActiveBuilds, fetchImages]);
 
   const handleAction = async (action: 'start' | 'stop' | 'init' | 'snapshot' | 'enable-gke' | 'delete' | 'delete-infrastructure' | 'stop-all', name: string) => {
     let url = `/api/workstations/${user_ns}/${action}/${name}`;
@@ -1166,6 +1166,7 @@ function App() {
       />
 
       <EditWorkstationDialog
+        key={editingWorkstation?.name || 'edit-dialog'}
         open={isEditDialogOpen}
         onClose={() => {
           setIsEditDialogOpen(false);

@@ -558,6 +558,35 @@ kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify
         logger.error(f"Error generating connect script: {e}")
         return f"echo 'Error generating connect script: {str(e)}'\n"
 
+@router.post("/{user_ns}/snapshot")
+def snapshot_workstation(user_ns: str):
+    try:
+        k8s = get_k8s_manager()
+        compute = get_compute_manager()
+        
+        # We assume the workstation name is "workstation" for this simplified endpoint
+        name = "workstation"
+        
+        volume_handle = k8s.get_pvc_volume_handle(user_ns, f"{name}-pvc")
+        if not volume_handle:
+            raise HTTPException(status_code=404, detail="Volume handle not found")
+        
+        # handle format: projects/{project}/zones/{zone}/disks/{disk_name}
+        parts = volume_handle.split('/')
+        if len(parts) < 6:
+            raise HTTPException(status_code=500, detail=f"Invalid volume handle format: {volume_handle}")
+        project = parts[1]
+        zone = parts[3]
+        disk_name = parts[5]
+        
+        snapshot_name = f"snap-{name}-{int(time.time())}"
+        compute.create_disk_snapshot(project, zone, disk_name, snapshot_name)
+        
+        return {"status": "ok", "snapshot_name": snapshot_name}
+    except Exception as e:
+        logger.error(f"Error creating snapshot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{user_ns}/status/{name}", response_model=WorkstationResponse)
 def get_workstation_status(user_ns: str, name: str):
     res = get_k8s_manager().get_workstation_status(user_ns, name)
