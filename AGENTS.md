@@ -58,7 +58,22 @@ cd backend && pytest tests/test_foo.py::test_bar  # Single test
 
 ### Deployment
 ```bash
-./deploy.sh   # Builds Docker image and deploys to Cloud Run
+./deploy.sh   # Builds Docker image and deploys to Cloud Run (requires authentication)
+```
+
+### Access Control
+The Cloud Run service requires authentication (no public access). To grant a user access:
+```bash
+gcloud run services add-iam-policy-binding workstation-lite \
+  --region us-central1 \
+  --member="user:someone@example.com" \
+  --role="roles/run.invoker"
+```
+
+To access the app in a browser, use the Cloud Run proxy (injects auth tokens automatically):
+```bash
+gcloud run services proxy workstation-lite --region us-central1 --port 3333
+# Then open http://localhost:3333
 ```
 
 ## Development Conventions
