@@ -8,8 +8,13 @@ import WorkstationEditor from './components/WorkstationEditor';
 import ConnectionInstructions from './components/ConnectionInstructions';
 import NewWorkstationDialog from './components/NewWorkstationDialog';
 import EditWorkstationDialog from './components/EditWorkstationDialog';
+import NewServiceDialog from './components/NewServiceDialog';
+import EditServiceDialog from './components/EditServiceDialog';
 import type { ImageMetadata } from './components/NewWorkstationDialog';
 import type { WorkstationConfig } from './components/EditWorkstationDialog';
+import type { CatalogEntry } from './components/NewServiceDialog';
+import type { ServiceConfig } from './components/EditServiceDialog';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 interface WorkstationStatus {
   name: string;
@@ -29,6 +34,28 @@ interface WorkstationStatus {
 
 interface WorkstationListResponse {
   workstations: WorkstationStatus[];
+  count: number;
+}
+
+interface ServiceStatusInfo {
+  name: string;
+  user_ns: string;
+  status: string;
+  image?: string;
+  service_type?: string;
+  ports?: number[];
+  cpu?: string;
+  memory?: string;
+  disk_size?: string;
+  env_vars?: Record<string, string>;
+  pod_name?: string;
+  pod_ready: boolean;
+  message?: string;
+  connect_hint?: string;
+}
+
+interface ServiceListResponse {
+  services: ServiceStatusInfo[];
   count: number;
 }
 
@@ -60,6 +87,13 @@ function App() {
   const [isNewDialogOpen, setIsNewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingWorkstation, setEditingWorkstation] = useState<WorkstationConfig | null>(null);
+
+  // Service state
+  const [services, setServices] = useState<ServiceStatusInfo[]>([]);
+  const [serviceCatalog, setServiceCatalog] = useState<CatalogEntry[]>([]);
+  const [isNewServiceDialogOpen, setIsNewServiceDialogOpen] = useState(false);
+  const [isEditServiceDialogOpen, setIsEditServiceDialogOpen] = useState(false);
+  const [editingService, setEditingService] = useState<ServiceConfig | null>(null);
 
   // States for viewing/editing existing image Dockerfiles
   const [selectedImageName, setSelectedImageName] = useState<string | undefined>(undefined);
@@ -165,6 +199,33 @@ function App() {
     }
   };
 
+  const fetchServices = async () => {
+    try {
+      const response = await fetch(`/api/services/${user_ns}/list`, {
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
+        cache: 'no-store'
+      });
+      if (response.ok) {
+        const data: ServiceListResponse = await response.json();
+        setServices(data.services);
+      }
+    } catch (error) {
+      console.error("Failed to fetch services:", error);
+    }
+  };
+
+  const fetchServiceCatalog = async () => {
+    try {
+      const response = await fetch('/api/services/catalog');
+      if (response.ok) {
+        const data = await response.json();
+        setServiceCatalog(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch service catalog:", error);
+    }
+  };
+
   const fetchAll = () => {
     fetchWorkstations();
     fetchImages();
@@ -172,6 +233,8 @@ function App() {
     fetchConfig();
     fetchNodes();
     fetchAdcStatus();
+    fetchServices();
+    fetchServiceCatalog();
   };
 
   const TERMINAL_BUILD_STATUSES = ['SUCCESS', 'FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED', 'EXPIRED'];
@@ -184,6 +247,7 @@ function App() {
     fetchAll();
     const interval = setInterval(() => {
       fetchWorkstations();
+      fetchServices();
       fetchClusterStatus();
       fetchNodes();
     }, 5000);
@@ -289,6 +353,77 @@ function App() {
       }
     } catch (error) {
       setNotification({ type: 'error', msg: `Error saving credentials: ${error}` });
+    }
+  };
+
+  // ── Service handlers ──────────────────────────────────────────────────
+
+  const handleCreateService = async (name: string, serviceType: string, image: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>) => {
+    setNotification({ type: 'info', msg: `Creating service ${name}...` });
+    try {
+      const saveResponse = await fetch(`/api/services/${user_ns}/save-config/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image, service_type: serviceType, ports, cpu, memory, disk_size: diskSize, env_vars: envVars }),
+      });
+      if (saveResponse.ok) {
+        const startResponse = await fetch(`/api/services/${user_ns}/start/${name}`, { method: 'POST' });
+        const data = await startResponse.json();
+        if (startResponse.ok) {
+          setNotification({ type: 'success', msg: data.message || `Service ${name} started` });
+        } else {
+          setNotification({ type: 'error', msg: `Failed to start: ${data.detail}` });
+        }
+        fetchServices();
+      } else {
+        const data = await saveResponse.json();
+        setNotification({ type: 'error', msg: `Failed to save config: ${data.detail}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', msg: `Error creating service: ${error}` });
+    }
+  };
+
+  const handleServiceAction = async (action: 'start' | 'stop' | 'delete', name: string) => {
+    const url = `/api/services/${user_ns}/${action}/${name}`;
+    setNotification({ type: 'info', msg: `${action.toUpperCase()} service ${name}...` });
+    try {
+      const response = await fetch(url, { method: 'POST' });
+      const data = await response.json();
+      if (response.ok) {
+        setNotification({ type: 'success', msg: data.message || 'Action successful' });
+      } else {
+        setNotification({ type: 'error', msg: `Failed: ${data.detail || data.message}` });
+      }
+      fetchServices();
+    } catch (error) {
+      setNotification({ type: 'error', msg: `Error: ${error}` });
+    }
+  };
+
+  const handleUpdateService = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>) => {
+    setNotification({ type: 'info', msg: `Updating service ${name}...` });
+    try {
+      // Get existing config to preserve service_type and image
+      const existingSvc = services.find(s => s.name === name);
+      const response = await fetch(`/api/services/${user_ns}/save-config/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: existingSvc?.image,
+          service_type: existingSvc?.service_type || 'custom',
+          ports, cpu, memory, disk_size: diskSize, env_vars: envVars,
+        }),
+      });
+      if (response.ok) {
+        setNotification({ type: 'success', msg: `Service ${name} config updated.` });
+        fetchServices();
+      } else {
+        const data = await response.json();
+        setNotification({ type: 'error', msg: `Failed: ${data.detail}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', msg: `Error: ${error}` });
     }
   };
 
@@ -418,6 +553,7 @@ function App() {
           <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
             <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
               <Tab label="Workstations" />
+              <Tab label="Services" />
               <Tab label="Image Templates" />
               <Tab label="Infrastructure" />
             </Tabs>
@@ -573,6 +709,191 @@ function App() {
 
           {tabValue === 1 && (
             <Box>
+              <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="h5">Services ({services.length})</Typography>
+                <Button
+                  variant="contained"
+                  onClick={() => setIsNewServiceDialogOpen(true)}
+                  disabled={!isClusterReady}
+                >
+                  New Service
+                </Button>
+              </Box>
+
+              <Grid container spacing={2}>
+                {services.length === 0 && !loading && (
+                  <Grid size={12}>
+                    <Paper sx={{ p: 4, textAlign: 'center', border: '2px dashed #ccc', bgcolor: 'transparent' }}>
+                      <Typography color="text.secondary">No services created yet. Add a database, cache, or queue.</Typography>
+                    </Paper>
+                  </Grid>
+                )}
+                {services.map((svc) => {
+                  const k8sName = `svc-${svc.name}`;
+                  const connectStr = svc.ports && svc.ports.length > 0
+                    ? `${k8sName}:${svc.ports[0]}`
+                    : null;
+                  const currentHost = window.location.host;
+                  const protocol = window.location.protocol;
+                  const connectUrl = `${protocol}//${currentHost}/api/services/${user_ns}/connect/${svc.name}`;
+                  const execUrl = `${protocol}//${currentHost}/api/services/${user_ns}/exec/${svc.name}`;
+
+                  return (
+                    <Grid size={{ xs: 12, md: 6, lg: 4 }} key={svc.name}>
+                      <Card elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                        <CardContent sx={{ flexGrow: 1 }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="h6">{svc.name}</Typography>
+                            <Box>
+                              <Chip
+                                label={svc.status}
+                                size="small"
+                                color={
+                                  svc.status === 'RUNNING' ? 'success' :
+                                  svc.status === 'ERROR' ? 'error' :
+                                  svc.status === 'STOPPED' ? 'default' : 'info'
+                                }
+                                sx={{ mr: 1 }}
+                              />
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => {
+                                  if (window.confirm(`Delete service "${svc.name}"? This will destroy all data.`)) {
+                                    handleServiceAction('delete', svc.name);
+                                  }
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Box>
+                          </Box>
+
+                          {svc.status === 'PROVISIONING' && <LinearProgress sx={{ mb: 1 }} />}
+
+                          {svc.status === 'ERROR' && svc.message && (
+                            <Alert severity="error" sx={{ mb: 1, fontSize: '0.75rem' }}>{svc.message}</Alert>
+                          )}
+
+                          <Chip label={svc.service_type || 'custom'} size="small" variant="outlined" sx={{ mb: 1 }} />
+
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
+                            Image: {svc.image}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
+                            CPU: {svc.cpu || '250m'} | Mem: {svc.memory || '512Mi'} | Disk: {svc.disk_size || '5Gi'}
+                          </Typography>
+
+                          {connectStr && svc.status === 'RUNNING' && (
+                            <Paper sx={{ p: 1.5, mt: 1, bgcolor: '#f5f5f5' }} elevation={1}>
+                              <Typography variant="caption" color="text.secondary">Connect from workstation:</Typography>
+                              <Box sx={{ p: 1, bgcolor: '#2d2d2d', color: '#fff', fontFamily: 'monospace', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}>
+                                <code style={{ fontSize: '0.8rem' }}>{connectStr}</code>
+                                <Tooltip title="Copy">
+                                  <IconButton size="small" onClick={() => navigator.clipboard.writeText(connectStr)} sx={{ color: '#fff', ml: 1 }}>
+                                    <ContentCopyIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            </Paper>
+                          )}
+
+                          {svc.env_vars && Object.keys(svc.env_vars).length > 0 && (
+                            <Accordion disableGutters elevation={0} sx={{ mt: 1, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+                              <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: 'auto', '& .MuiAccordionSummary-content': { m: 0 } }}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Environment Variables ({Object.keys(svc.env_vars).length})
+                                </Typography>
+                              </AccordionSummary>
+                              <AccordionDetails sx={{ p: 0, pt: 0.5 }}>
+                                {Object.entries(svc.env_vars).map(([key, value]) => (
+                                  <Typography key={key} variant="caption" color="text.secondary" sx={{ display: 'block', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                                    {key}={value}
+                                  </Typography>
+                                ))}
+                              </AccordionDetails>
+                            </Accordion>
+                          )}
+
+                          {svc.status === 'RUNNING' && (
+                            <Accordion disableGutters elevation={0} sx={{ mt: 1, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+                              <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: 'auto', '& .MuiAccordionSummary-content': { m: 0 } }}>
+                                <Typography variant="caption" color="text.secondary">Debug Connection (one-liner)</Typography>
+                              </AccordionSummary>
+                              <AccordionDetails sx={{ p: 0, pt: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary">Port-forward:</Typography>
+                                <Box sx={{ p: 0.5, bgcolor: '#2d2d2d', color: '#fff', fontFamily: 'monospace', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5, mb: 1 }}>
+                                  <code style={{ fontSize: '0.7rem', wordBreak: 'break-all' }}>/bin/bash -c "$(curl -fsSL {connectUrl})"</code>
+                                  <Tooltip title="Copy">
+                                    <IconButton size="small" onClick={() => navigator.clipboard.writeText(`/bin/bash -c "$(curl -fsSL ${connectUrl})"`)} sx={{ color: '#fff', ml: 1 }}>
+                                      <ContentCopyIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">Debug shell:</Typography>
+                                <Box sx={{ p: 0.5, bgcolor: '#2d2d2d', color: '#fff', fontFamily: 'monospace', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}>
+                                  <code style={{ fontSize: '0.7rem', wordBreak: 'break-all' }}>/bin/bash -c "$(curl -fsSL {execUrl})"</code>
+                                  <Tooltip title="Copy">
+                                    <IconButton size="small" onClick={() => navigator.clipboard.writeText(`/bin/bash -c "$(curl -fsSL ${execUrl})"`)} sx={{ color: '#fff', ml: 1 }}>
+                                      <ContentCopyIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                              </AccordionDetails>
+                            </Accordion>
+                          )}
+                        </CardContent>
+                        <Divider />
+                        <CardActions sx={{ justifyContent: 'flex-end', p: 2 }}>
+                          {svc.status === 'STOPPED' && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => {
+                                setEditingService({
+                                  name: svc.name,
+                                  image: svc.image,
+                                  service_type: svc.service_type || 'custom',
+                                  ports: svc.ports || [],
+                                  cpu: svc.cpu || '250m',
+                                  memory: svc.memory || '512Mi',
+                                  disk_size: svc.disk_size || '5Gi',
+                                  env_vars: svc.env_vars || {},
+                                });
+                                setIsEditServiceDialogOpen(true);
+                              }}
+                            >
+                              Edit Config
+                            </Button>
+                          )}
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="error"
+                            onClick={() => handleServiceAction('stop', svc.name)}
+                            disabled={svc.status === 'STOPPED'}
+                          >
+                            Stop
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => handleServiceAction('start', svc.name)}
+                            disabled={svc.status === 'RUNNING' || svc.status === 'PROVISIONING'}
+                          >
+                            Start
+                          </Button>
+                        </CardActions>
+                      </Card>
+                    </Grid>
+                  );
+                })}
+              </Grid>
+            </Box>
+          )}
+
+          {tabValue === 2 && (
+            <Box>
               <Grid container spacing={3}>
                 <Grid size={{ xs: 12, lg: 4 }}>
                   <Typography variant="h5" gutterBottom>
@@ -668,7 +989,7 @@ function App() {
             </Box>
           )}
 
-          {tabValue === 2 && (
+          {tabValue === 3 && (
             <Box>
               <Typography variant="h5" gutterBottom>Infrastructure Management</Typography>
 
@@ -819,6 +1140,23 @@ function App() {
         onConfirm={handleUpdateWorkstation}
         workstation={editingWorkstation}
         availableImages={availableImages}
+      />
+
+      <NewServiceDialog
+        open={isNewServiceDialogOpen}
+        onClose={() => setIsNewServiceDialogOpen(false)}
+        onConfirm={handleCreateService}
+        catalog={serviceCatalog}
+      />
+
+      <EditServiceDialog
+        open={isEditServiceDialogOpen}
+        onClose={() => {
+          setIsEditServiceDialogOpen(false);
+          setEditingService(null);
+        }}
+        onConfirm={handleUpdateService}
+        service={editingService}
       />
 
       {notification && (

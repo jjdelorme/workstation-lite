@@ -644,4 +644,332 @@ class K8sManager:
             logger.error(f"Error listing nodes: {e}")
             return []
 
+    # ── Service (non-workstation pod) operations ──────────────────────────
+
+    def apply_service_statefulset(self, user_ns: str, name: str, image: str, replicas: int,
+                                  ports: list[int] = None, cpu: str = "250m", memory: str = "512Mi",
+                                  env_vars: dict = None, data_mount_path: str = "/data",
+                                  health_check_command: list[str] = None):
+        """Create or update a StatefulSet for a service pod (database, cache, etc.)."""
+        if ports is None:
+            ports = []
+        self._refresh_config()
+        if not self.apps_api:
+            return
+
+        k8s_name = f"svc-{name}"
+
+        container_ports = [client.V1ContainerPort(container_port=p) for p in ports]
+
+        resource_requests = {"cpu": cpu, "memory": memory}
+
+        volume_mounts = [
+            client.V1VolumeMount(name="data", mount_path=data_mount_path),
+        ]
+        volumes = [
+            client.V1Volume(
+                name="data",
+                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=f"{k8s_name}-pvc")
+            ),
+        ]
+
+        env_list = []
+        if env_vars:
+            for k, v in env_vars.items():
+                env_list.append(client.V1EnvVar(name=k, value=v))
+
+        # Readiness probe from catalog health check
+        readiness_probe = None
+        if health_check_command:
+            readiness_probe = client.V1Probe(
+                _exec=client.V1ExecAction(command=health_check_command),
+                initial_delay_seconds=10,
+                period_seconds=10,
+                timeout_seconds=5,
+            )
+
+        sts = client.V1StatefulSet(
+            metadata=client.V1ObjectMeta(
+                name=k8s_name,
+                labels={
+                    "app": k8s_name,
+                    "managed-by": "workstation-lite",
+                    "resource-type": "service",
+                }
+            ),
+            spec=client.V1StatefulSetSpec(
+                replicas=replicas,
+                selector=client.V1LabelSelector(match_labels={"app": k8s_name}),
+                service_name=k8s_name,
+                template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(labels={
+                        "app": k8s_name,
+                        "resource-type": "service",
+                    }),
+                    spec=client.V1PodSpec(
+                        containers=[
+                            client.V1Container(
+                                name=k8s_name,
+                                image=image,
+                                ports=container_ports if container_ports else None,
+                                env=env_list if env_list else None,
+                                resources=client.V1ResourceRequirements(
+                                    requests=resource_requests,
+                                ),
+                                volume_mounts=volume_mounts,
+                                readiness_probe=readiness_probe,
+                            )
+                        ],
+                        volumes=volumes,
+                    )
+                )
+            )
+        )
+        try:
+            self.apps_api.read_namespaced_stateful_set(name=k8s_name, namespace=user_ns)
+            self.apps_api.replace_namespaced_stateful_set(name=k8s_name, namespace=user_ns, body=sts)
+        except Exception:
+            try:
+                self.apps_api.create_namespaced_stateful_set(namespace=user_ns, body=sts)
+            except Exception as e:
+                logger.error(f"Failed to create service StatefulSet {k8s_name} in {user_ns}: {e}")
+
+    def apply_cluster_ip_service(self, user_ns: str, name: str, ports: list[int]):
+        """Create or update a ClusterIP Service for a service pod."""
+        self._refresh_config()
+        if not self.core_api:
+            return
+
+        k8s_name = f"svc-{name}"
+        svc_ports = [
+            client.V1ServicePort(port=p, target_port=p, name=f"port-{p}")
+            for p in ports
+        ]
+
+        svc = client.V1Service(
+            metadata=client.V1ObjectMeta(
+                name=k8s_name,
+                labels={
+                    "managed-by": "workstation-lite",
+                    "resource-type": "service",
+                }
+            ),
+            spec=client.V1ServiceSpec(
+                selector={"app": k8s_name},
+                ports=svc_ports,
+                type="ClusterIP",
+            )
+        )
+        try:
+            self.core_api.read_namespaced_service(name=k8s_name, namespace=user_ns)
+            self.core_api.replace_namespaced_service(name=k8s_name, namespace=user_ns, body=svc)
+        except Exception:
+            try:
+                self.core_api.create_namespaced_service(namespace=user_ns, body=svc)
+            except Exception as e:
+                logger.error(f"Failed to create ClusterIP Service {k8s_name} in {user_ns}: {e}")
+
+    def get_service_status(self, user_ns: str, name: str) -> dict:
+        k8s_name = f"svc-{name}"
+        self._refresh_config()
+        if not self.apps_api or not self.core_api:
+            return {"status": "UNKNOWN", "pod_name": None, "pod_ready": False}
+        try:
+            sts = self.apps_api.read_namespaced_stateful_set(name=k8s_name, namespace=user_ns)
+
+            status = "UNKNOWN"
+            pod_ready = False
+            pod_name = f"{k8s_name}-0"
+            error_message = None
+
+            try:
+                pod = self.core_api.read_namespaced_pod(name=pod_name, namespace=user_ns)
+                if pod.status.container_statuses:
+                    container_status = pod.status.container_statuses[0]
+                    state = container_status.state
+                    if state.waiting:
+                        reason = state.waiting.reason
+                        if reason in ["ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"]:
+                            status = "ERROR"
+                            error_message = f"Pod Error: {reason} - {state.waiting.message or 'Check logs'}"
+                    elif state.terminated:
+                        if state.terminated.exit_code != 0:
+                            status = "ERROR"
+                            error_message = f"Pod Terminated with exit code {state.terminated.exit_code}: {state.terminated.reason}"
+            except Exception:
+                pass
+
+            if status != "ERROR":
+                if sts.status.ready_replicas and sts.status.ready_replicas > 0:
+                    status = "RUNNING"
+                    pod_ready = True
+                elif sts.spec.replicas == 0:
+                    status = "STOPPED"
+                else:
+                    status = "PROVISIONING"
+
+            return {
+                "status": status,
+                "pod_name": pod_name,
+                "pod_ready": pod_ready,
+                "message": error_message,
+            }
+        except Exception as e:
+            if hasattr(e, 'status') and e.status == 404:
+                return {"status": "STOPPED", "pod_name": None, "pod_ready": False}
+            if "404" in str(e):
+                return {"status": "STOPPED", "pod_name": None, "pod_ready": False}
+            logger.error(f"Error getting service status for {user_ns}/{name}: {e}")
+            return {"status": "UNKNOWN", "pod_name": None, "pod_ready": False}
+
+    def list_services(self, user_ns: str) -> list[dict]:
+        self._refresh_config()
+        if not self.apps_api:
+            return []
+        try:
+            stss = self.apps_api.list_namespaced_stateful_set(
+                namespace=user_ns,
+                label_selector="managed-by=workstation-lite,resource-type=service"
+            )
+            services = []
+            for sts in stss.items:
+                k8s_name = sts.metadata.name
+                # Strip the svc- prefix for the user-facing name
+                name = k8s_name[4:] if k8s_name.startswith("svc-") else k8s_name
+                status_info = self.get_service_status(user_ns, name)
+                status_info["name"] = name
+                try:
+                    status_info["image"] = sts.spec.template.spec.containers[0].image
+                except (IndexError, AttributeError):
+                    status_info["image"] = "unknown"
+                services.append(status_info)
+            return services
+        except Exception as e:
+            logger.error(f"Error listing services in {user_ns}: {e}")
+            return []
+
+    def save_service_config(self, user_ns: str, service_name: str, image: str, service_type: str = "custom",
+                            ports: list[int] = None, cpu: str = "250m", memory: str = "512Mi",
+                            disk_size: str = "5Gi", env_vars: dict = None):
+        if ports is None:
+            ports = []
+        self._refresh_config()
+        if not self.core_api:
+            return
+        import json
+        cm_name = "service-configs"
+        config_data = json.dumps({
+            "image": image, "service_type": service_type, "ports": ports,
+            "cpu": cpu, "memory": memory, "disk_size": disk_size,
+            "env_vars": env_vars or {},
+        })
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            if not cm.data:
+                cm.data = {}
+            cm.data[service_name] = config_data
+            self.core_api.patch_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+        except Exception:
+            cm = client.V1ConfigMap(
+                metadata=client.V1ObjectMeta(name=cm_name),
+                data={service_name: config_data}
+            )
+            try:
+                self.core_api.create_namespaced_config_map(namespace=user_ns, body=cm)
+            except Exception as e:
+                logger.error(f"Failed to save service config in {user_ns}: {e}")
+
+    def get_service_config(self, user_ns: str, service_name: str) -> dict:
+        self._refresh_config()
+        default_config = {
+            "image": None, "service_type": "custom", "ports": [],
+            "cpu": "250m", "memory": "512Mi", "disk_size": "5Gi", "env_vars": {},
+        }
+        if not self.core_api:
+            return default_config
+        cm_name = "service-configs"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            val = cm.data.get(service_name)
+            if not val:
+                return default_config
+            import json
+            parsed = json.loads(val)
+            return {
+                "image": parsed.get("image"),
+                "service_type": parsed.get("service_type", "custom"),
+                "ports": parsed.get("ports", []),
+                "cpu": parsed.get("cpu", "250m"),
+                "memory": parsed.get("memory", "512Mi"),
+                "disk_size": parsed.get("disk_size", "5Gi"),
+                "env_vars": parsed.get("env_vars", {}),
+            }
+        except Exception:
+            return default_config
+
+    def delete_service_config(self, user_ns: str, service_name: str):
+        self._refresh_config()
+        if not self.core_api:
+            return
+        cm_name = "service-configs"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            if cm.data and service_name in cm.data:
+                del cm.data[service_name]
+                if not cm.data:
+                    cm.data = {}
+                self.core_api.replace_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+                logger.info(f"Removed service config for {service_name} in {user_ns}")
+        except Exception as e:
+            if not (hasattr(e, 'status') and e.status == 404):
+                logger.error(f"Failed to delete service config for {service_name} in {user_ns}: {e}")
+
+    def delete_service(self, user_ns: str, name: str):
+        """Delete a service's StatefulSet, ClusterIP Service, and PVC."""
+        self._refresh_config()
+        if not self.apps_api or not self.core_api:
+            return
+
+        k8s_name = f"svc-{name}"
+
+        # 1. Delete StatefulSet
+        try:
+            self.apps_api.delete_namespaced_stateful_set(name=k8s_name, namespace=user_ns)
+            logger.info(f"Deleted service StatefulSet {k8s_name} in {user_ns}")
+        except Exception as e:
+            if not (hasattr(e, 'status') and e.status == 404):
+                logger.error(f"Failed to delete service StatefulSet {k8s_name} in {user_ns}: {e}")
+
+        # 2. Delete ClusterIP Service
+        try:
+            self.core_api.delete_namespaced_service(name=k8s_name, namespace=user_ns)
+            logger.info(f"Deleted ClusterIP Service {k8s_name} in {user_ns}")
+        except Exception as e:
+            if not (hasattr(e, 'status') and e.status == 404):
+                logger.error(f"Failed to delete ClusterIP Service {k8s_name} in {user_ns}: {e}")
+
+        # 3. Delete PVC
+        pvc_name = f"{k8s_name}-pvc"
+        try:
+            self.core_api.delete_namespaced_persistent_volume_claim(name=pvc_name, namespace=user_ns)
+            logger.info(f"Deleted service PVC {pvc_name} in {user_ns}")
+        except Exception as e:
+            if not (hasattr(e, 'status') and e.status == 404):
+                logger.error(f"Failed to delete service PVC {pvc_name} in {user_ns}: {e}")
+
+        # 4. Remove config
+        self.delete_service_config(user_ns, name)
+
+    def scale_service(self, user_ns: str, name: str, replicas: int):
+        k8s_name = f"svc-{name}"
+        self._refresh_config()
+        if not self.apps_api:
+            return
+        body = client.V1Scale(spec=client.V1ScaleSpec(replicas=replicas))
+        try:
+            self.apps_api.patch_namespaced_stateful_set_scale(name=k8s_name, namespace=user_ns, body=body)
+        except Exception as e:
+            logger.error(f"Failed to scale service {k8s_name} in {user_ns}: {e}")
+
+
 k8s_manager = K8sManager()

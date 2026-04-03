@@ -1,0 +1,285 @@
+import pytest
+import json
+from unittest.mock import MagicMock, patch
+from fastapi.testclient import TestClient
+from app.services.k8s import K8sManager
+from app.main import app
+from app.models.service import SERVICE_CATALOG, SERVICE_CATALOG_BY_TYPE, ServiceStatus
+
+client = TestClient(app)
+
+
+# ── Model tests ──────────────────────────────────────────────────────────
+
+def test_service_catalog_has_entries():
+    assert len(SERVICE_CATALOG) >= 5
+    types = [e.service_type for e in SERVICE_CATALOG]
+    assert "postgresql" in types
+    assert "redis" in types
+    assert "mysql" in types
+    assert "mongodb" in types
+    assert "rabbitmq" in types
+
+
+def test_service_catalog_by_type_lookup():
+    pg = SERVICE_CATALOG_BY_TYPE["postgresql"]
+    assert pg.image == "postgres:16"
+    assert 5432 in pg.ports
+
+
+def test_service_status_enum():
+    assert ServiceStatus.RUNNING == "RUNNING"
+    assert ServiceStatus.STOPPED == "STOPPED"
+
+
+# ── K8s manager tests ───────────────────────────────────────────────────
+
+@pytest.fixture
+def mock_k8s_client():
+    with patch("kubernetes.client.CoreV1Api") as mock_core, \
+         patch("kubernetes.client.AppsV1Api") as mock_apps, \
+         patch("kubernetes.config.load_incluster_config"), \
+         patch("kubernetes.config.load_kube_config"):
+        yield mock_core.return_value, mock_apps.return_value
+
+
+def test_apply_service_statefulset(mock_k8s_client):
+    _, mock_apps = mock_k8s_client
+    manager = K8sManager()
+
+    mock_apps.read_namespaced_stateful_set.side_effect = Exception("Not Found")
+
+    manager.apply_service_statefulset(
+        "user-1", "my-postgres", "postgres:16", 1,
+        ports=[5432], cpu="250m", memory="512Mi",
+        data_mount_path="/var/lib/postgresql/data",
+        health_check_command=["pg_isready"],
+    )
+
+    assert mock_apps.create_namespaced_stateful_set.called
+    args, kwargs = mock_apps.create_namespaced_stateful_set.call_args
+    assert kwargs['namespace'] == "user-1"
+    sts = kwargs['body']
+    assert sts.metadata.name == "svc-my-postgres"
+    assert sts.metadata.labels["resource-type"] == "service"
+    assert sts.spec.template.spec.containers[0].image == "postgres:16"
+    assert sts.spec.template.spec.containers[0].readiness_probe is not None
+
+
+def test_apply_cluster_ip_service(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    mock_core.read_namespaced_service.side_effect = Exception("Not Found")
+
+    manager.apply_cluster_ip_service("user-1", "my-postgres", [5432])
+
+    assert mock_core.create_namespaced_service.called
+    args, kwargs = mock_core.create_namespaced_service.call_args
+    svc = kwargs['body']
+    assert svc.metadata.name == "svc-my-postgres"
+    assert svc.spec.type == "ClusterIP"
+    assert svc.spec.ports[0].port == 5432
+
+
+def test_scale_service(mock_k8s_client):
+    _, mock_apps = mock_k8s_client
+    manager = K8sManager()
+
+    manager.scale_service("user-1", "my-postgres", 0)
+
+    assert mock_apps.patch_namespaced_stateful_set_scale.called
+    args, kwargs = mock_apps.patch_namespaced_stateful_set_scale.call_args
+    assert kwargs['name'] == "svc-my-postgres"
+    assert kwargs['body'].spec.replicas == 0
+
+
+def test_save_service_config(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    mock_core.read_namespaced_config_map.side_effect = Exception("Not Found")
+
+    manager.save_service_config("user-1", "my-postgres", "postgres:16", "postgresql", [5432])
+
+    assert mock_core.create_namespaced_config_map.called
+    args, kwargs = mock_core.create_namespaced_config_map.call_args
+    parsed = json.loads(kwargs['body'].data['my-postgres'])
+    assert parsed['image'] == "postgres:16"
+    assert parsed['service_type'] == "postgresql"
+    assert parsed['ports'] == [5432]
+
+
+def test_get_service_config(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    mock_cm = MagicMock()
+    mock_cm.data = {"my-postgres": json.dumps({
+        "image": "postgres:16", "service_type": "postgresql",
+        "ports": [5432], "cpu": "250m", "memory": "512Mi",
+        "disk_size": "5Gi", "env_vars": {"POSTGRES_PASSWORD": "secret"},
+    })}
+    mock_core.read_namespaced_config_map.return_value = mock_cm
+
+    config = manager.get_service_config("user-1", "my-postgres")
+    assert config["image"] == "postgres:16"
+    assert config["service_type"] == "postgresql"
+    assert config["env_vars"]["POSTGRES_PASSWORD"] == "secret"
+
+
+def test_get_service_config_default(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    mock_core.read_namespaced_config_map.side_effect = Exception("Not Found")
+
+    config = manager.get_service_config("user-1", "nonexistent")
+    assert config["image"] is None
+    assert config["cpu"] == "250m"
+
+
+def test_delete_service(mock_k8s_client):
+    mock_core, mock_apps = mock_k8s_client
+    manager = K8sManager()
+
+    manager.delete_service("user-1", "my-postgres")
+
+    mock_apps.delete_namespaced_stateful_set.assert_called_with(
+        name="svc-my-postgres", namespace="user-1"
+    )
+    mock_core.delete_namespaced_service.assert_called_with(
+        name="svc-my-postgres", namespace="user-1"
+    )
+    mock_core.delete_namespaced_persistent_volume_claim.assert_called_with(
+        name="svc-my-postgres-pvc", namespace="user-1"
+    )
+
+
+def test_list_services(mock_k8s_client):
+    mock_core, mock_apps = mock_k8s_client
+    manager = K8sManager()
+
+    mock_sts = MagicMock()
+    mock_sts.metadata.name = "svc-my-redis"
+    mock_sts.spec.template.spec.containers = [MagicMock(image="redis:7")]
+    mock_sts.spec.replicas = 1
+    mock_sts.status.ready_replicas = 1
+
+    mock_list = MagicMock()
+    mock_list.items = [mock_sts]
+    mock_apps.list_namespaced_stateful_set.return_value = mock_list
+
+    # Mock pod status for get_service_status
+    mock_pod = MagicMock()
+    mock_pod.status.container_statuses = [MagicMock(state=MagicMock(waiting=None, terminated=None))]
+    mock_core.read_namespaced_pod.return_value = mock_pod
+
+    # Mock the STS read for get_service_status
+    mock_sts_read = MagicMock()
+    mock_sts_read.status.ready_replicas = 1
+    mock_sts_read.spec.replicas = 1
+    mock_apps.read_namespaced_stateful_set.return_value = mock_sts_read
+
+    services = manager.list_services("user-1")
+    assert len(services) == 1
+    assert services[0]["name"] == "my-redis"
+    assert services[0]["status"] == "RUNNING"
+
+
+# ── API tests ────────────────────────────────────────────────────────────
+
+def test_catalog_endpoint():
+    response = client.get("/api/services/catalog")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 5
+    types = [e["service_type"] for e in data]
+    assert "postgresql" in types
+
+
+@patch("app.api.services.get_k8s_manager")
+def test_list_services_api(mock_get_k8s):
+    mock_k8s = MagicMock()
+    mock_get_k8s.return_value = mock_k8s
+    mock_k8s.list_services.return_value = []
+
+    response = client.get("/api/services/user-1/list")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 0
+    assert data["services"] == []
+
+
+@patch("app.api.services.get_k8s_manager")
+def test_save_service_config_api(mock_get_k8s):
+    mock_k8s = MagicMock()
+    mock_get_k8s.return_value = mock_k8s
+    mock_k8s.get_service_config.return_value = {
+        "image": None, "service_type": "custom", "ports": [],
+        "cpu": "250m", "memory": "512Mi", "disk_size": "5Gi", "env_vars": {},
+    }
+
+    response = client.post("/api/services/user-1/save-config/my-pg", json={
+        "service_type": "postgresql",
+        "env_vars": {"POSTGRES_PASSWORD": "secret"},
+    })
+    assert response.status_code == 200
+    assert mock_k8s.save_service_config.called
+    call_args = mock_k8s.save_service_config.call_args
+    assert call_args[0][1] == "my-pg"  # service name
+    assert call_args[0][2] == "postgres:16"  # resolved from catalog
+
+
+@patch("app.api.services.get_k8s_manager")
+def test_stop_service_api(mock_get_k8s):
+    mock_k8s = MagicMock()
+    mock_get_k8s.return_value = mock_k8s
+
+    response = client.post("/api/services/user-1/stop/my-pg")
+    assert response.status_code == 200
+    mock_k8s.scale_service.assert_called_with("user-1", "my-pg", 0)
+
+
+@patch("app.api.services.get_k8s_manager")
+def test_delete_service_api(mock_get_k8s):
+    mock_k8s = MagicMock()
+    mock_get_k8s.return_value = mock_k8s
+
+    response = client.post("/api/services/user-1/delete/my-pg")
+    assert response.status_code == 200
+    mock_k8s.delete_service.assert_called_with("user-1", "my-pg")
+
+
+@patch("app.api.services.get_k8s_manager")
+@patch("app.api.services.settings")
+def test_connect_script_api(mock_settings, mock_get_k8s):
+    mock_settings.cluster_name = "test-cluster"
+    mock_settings.gcp_project_id = "test-project"
+    mock_settings.region = "us-central1"
+
+    mock_k8s = MagicMock()
+    mock_get_k8s.return_value = mock_k8s
+    mock_k8s.get_service_config.return_value = {
+        "image": "postgres:16", "service_type": "postgresql",
+        "ports": [5432], "cpu": "250m", "memory": "512Mi",
+        "disk_size": "5Gi", "env_vars": {},
+    }
+
+    response = client.get("/api/services/user-1/connect/my-pg")
+    assert response.status_code == 200
+    assert "port-forward" in response.text.lower()
+    assert "svc-my-pg-0" in response.text
+
+
+@patch("app.api.services.get_k8s_manager")
+@patch("app.api.services.settings")
+def test_exec_script_api(mock_settings, mock_get_k8s):
+    mock_settings.cluster_name = "test-cluster"
+    mock_settings.gcp_project_id = "test-project"
+    mock_settings.region = "us-central1"
+
+    response = client.get("/api/services/user-1/exec/my-pg")
+    assert response.status_code == 200
+    assert "svc-my-pg-0" in response.text
+    assert "exec" in response.text.lower()

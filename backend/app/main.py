@@ -10,12 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from app.api.health import router as health_router
 from app.api.workstations import router as workstations_router
 from app.api.admin import router as admin_router
+from app.api.services import router as services_router
 
 app = FastAPI(title="Workstation Lite API")
 
 # Mount API routes
 app.include_router(health_router, prefix="/api")
 app.include_router(workstations_router, prefix="/api")
+app.include_router(services_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 
 # Static assets routing
