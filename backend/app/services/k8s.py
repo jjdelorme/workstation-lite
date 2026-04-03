@@ -188,6 +188,8 @@ class K8sManager:
         # Environment variables for GCP credentials
         from app.core.config import settings
         env_list = [
+            client.V1EnvVar(name="PUID", value="1000"),
+            client.V1EnvVar(name="PGID", value="1000"),
             client.V1EnvVar(name="GOOGLE_APPLICATION_CREDENTIALS", value="/var/secrets/google/adc.json"),
             client.V1EnvVar(name="GOOGLE_CLOUD_PROJECT", value=settings.gcp_project_id or ""),
         ]
