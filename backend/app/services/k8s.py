@@ -532,7 +532,7 @@ class K8sManager:
 
     def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
         self._refresh_config()
-        default_config = {"image": None, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None}
+        default_config = {"image": None, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
         if not self.core_api: return default_config
         cm_name = "workstation-configs"
         try:
@@ -550,10 +550,11 @@ class K8sManager:
                     "memory": parsed.get("memory", "2Gi"),
                     "disk_size": parsed.get("disk_size", "10Gi"),
                     "gpu": parsed.get("gpu"),
+                    "env_vars": parsed.get("env_vars", {}),
                 }
             except json.JSONDecodeError:
                 # Backwards compatibility for old config format
-                return {"image": val, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None}
+                return {"image": val, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
         except Exception:
             return default_config
 
