@@ -6,6 +6,7 @@ from app.services.cloud_build import CloudBuildManager
 from app.services.compute import ComputeManager
 from app.services.service_usage import ServiceUsageManager
 from app.models.workstation import WorkstationResponse, WorkstationListResponse, WorkstationStatus, BuildRequest, SaveConfigRequest
+from pydantic import BaseModel
 from app.core.config import settings
 import google.auth
 import logging
@@ -328,7 +329,14 @@ def get_image_dockerfile_endpoint(user_ns: str, name: str):
 @router.post("/{user_ns}/save-config/{name}")
 def save_workstation_config_endpoint(user_ns: str, name: str, req: SaveConfigRequest):
     try:
-        get_k8s_manager().save_workstation_config(user_ns, name, req.image, req.ports)
+        current_config = get_k8s_manager().get_workstation_config(user_ns, name)
+        image = req.image if req.image else current_config.get("image")
+        ports = req.ports if req.ports is not None else current_config.get("ports", [3000])
+        cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "500m")
+        memory = req.memory if req.memory is not None else current_config.get("memory", "2Gi")
+        disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "10Gi")
+        gpu = req.gpu if req.gpu is not None else current_config.get("gpu")
+        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu)
         return {"status": "ok", "message": f"Config for {name} saved"}
     except Exception as e:
         logger.error(f"Error saving config: {e}")
@@ -347,6 +355,10 @@ def list_all_workstations(user_ns: str):
                 status=WorkstationStatus(w["status"]),
                 image=w.get("image"),
                 ports=ports,
+                cpu=config.get("cpu", "500m"),
+                memory=config.get("memory", "2Gi"),
+                disk_size=config.get("disk_size", "10Gi"),
+                gpu=config.get("gpu"),
                 pod_name=w.get("pod_name"),
                 pod_ready=w.get("pod_ready", False),
                 message=w.get("message")
@@ -358,16 +370,20 @@ def start_named_workstation(user_ns: str, name: str):
     try:
         # 1. Ensure Namespace exists
         get_k8s_manager().ensure_namespace(user_ns)
-        
-        # 2. Ensure PVC exists
-        pvc_name = f"{name}-pvc"
-        get_k8s_manager().apply_pvc(user_ns, pvc_name)
-        
-        # 3. Check for custom image
+
+        # 2. Read workstation config
         config = get_k8s_manager().get_workstation_config(user_ns, name)
         custom_image = config.get("image") if isinstance(config, dict) else config
         ports = config.get("ports", [3000]) if isinstance(config, dict) else [3000]
+        cpu = config.get("cpu", "500m")
+        memory = config.get("memory", "2Gi")
+        disk_size = config.get("disk_size", "10Gi")
+        gpu = config.get("gpu")
         final_image = custom_image if custom_image else settings.workstation_image
+
+        # 3. Ensure PVC exists
+        pvc_name = f"{name}-pvc"
+        get_k8s_manager().apply_pvc(user_ns, pvc_name, size=disk_size)
 
         # 4. Apply StatefulSet
         get_k8s_manager().apply_statefulset(
@@ -375,8 +391,11 @@ def start_named_workstation(user_ns: str, name: str):
             name,
             final_image,
             replicas=1,
-            ports=ports
-        )        
+            ports=ports,
+            cpu=cpu,
+            memory=memory,
+            gpu=gpu,
+        )
         return {"status": "ok", "message": f"Workstation {name} start initiated", "image": final_image}
     except Exception as e:
         logger.error(f"Error starting workstation: {e}")
@@ -512,9 +531,36 @@ def get_workstation_status(user_ns: str, name: str):
     res = get_k8s_manager().get_workstation_status(user_ns, name)
     return WorkstationResponse(
         name=name,
-        user_ns=user_ns, 
+        user_ns=user_ns,
         status=WorkstationStatus(res["status"]),
         pod_name=res["pod_name"],
         pod_ready=res["pod_ready"],
         image=res.get("image")
     )
+
+@router.get("/nodes")
+def list_cluster_nodes():
+    try:
+        nodes = get_k8s_manager().list_nodes()
+        return {"nodes": nodes}
+    except Exception as e:
+        logger.error(f"Error listing nodes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class AdcSecretRequest(BaseModel):
+    adc_json: str
+
+@router.get("/{user_ns}/adc-secret")
+def check_adc_secret(user_ns: str):
+    exists = get_k8s_manager().check_adc_secret(user_ns)
+    return {"exists": exists}
+
+@router.post("/{user_ns}/adc-secret")
+def save_adc_secret(user_ns: str, req: AdcSecretRequest):
+    try:
+        get_k8s_manager().ensure_namespace(user_ns)
+        get_k8s_manager().save_adc_secret(user_ns, req.adc_json)
+        return {"status": "ok", "message": "ADC credentials saved"}
+    except Exception as e:
+        logger.error(f"Error saving ADC secret: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

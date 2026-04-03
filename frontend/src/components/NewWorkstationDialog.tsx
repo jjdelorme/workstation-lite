@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, MenuItem, Select, FormControl, InputLabel, Box, Typography, Divider } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, MenuItem, Select, FormControl, InputLabel, Box, Typography, Divider, FormControlLabel, Checkbox } from '@mui/material';
 
 export interface ImageMetadata {
   uri: string;
@@ -10,7 +10,7 @@ export interface ImageMetadata {
 interface NewWorkstationDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, imageUri: string, ports: number[]) => void;
+  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null) => void;
   availableImages: ImageMetadata[];
 }
 
@@ -18,14 +18,30 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
   const [name, setName] = useState('');
   const [selectedImage, setSelectedImage] = useState('');
   const [portsStr, setPortsStr] = useState('3000');
+  const [cpu, setCpu] = useState('500m');
+  const [memory, setMemory] = useState('2Gi');
+  const [diskSize, setDiskSize] = useState('10Gi');
+  const [gpuEnabled, setGpuEnabled] = useState(false);
 
   const handleConfirm = () => {
     if (name && selectedImage) {
       const ports = portsStr.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
-      onConfirm(name, selectedImage, ports.length > 0 ? ports : [3000]);
+      onConfirm(
+        name,
+        selectedImage,
+        ports.length > 0 ? ports : [3000],
+        cpu,
+        memory,
+        diskSize,
+        gpuEnabled ? 'nvidia-l4' : null
+      );
       setName('');
       setSelectedImage('');
       setPortsStr('3000');
+      setCpu('500m');
+      setMemory('2Gi');
+      setDiskSize('10Gi');
+      setGpuEnabled(false);
       onClose();
     }
   };
@@ -41,14 +57,6 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
             fullWidth
             value={name}
             onChange={(e) => setName(e.target.value)}
-          />
-          <TextField
-            label="Ports to Expose (comma-separated)"
-            placeholder="e.g. 3000, 8080"
-            fullWidth
-            value={portsStr}
-            onChange={(e) => setPortsStr(e.target.value)}
-            helperText="Specify the ports you want to forward when connecting."
           />
           <FormControl fullWidth>
             <InputLabel>Select Image Configuration</InputLabel>
@@ -80,10 +88,55 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
               </MenuItem>
             </Select>
           </FormControl>
-          
-          <Typography variant="body2" color="text.secondary">
-            Choosing an image template will pre-configure your workstation environment with the tools and settings defined in that image's Dockerfile.
-          </Typography>
+
+          <Divider />
+          <Typography variant="subtitle2" color="text.secondary">Resources</Typography>
+
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <TextField
+              label="CPU"
+              placeholder="e.g. 500m, 1, 2"
+              value={cpu}
+              onChange={(e) => setCpu(e.target.value)}
+              helperText="Cores (e.g. 500m = 0.5 cores)"
+              sx={{ flex: 1 }}
+            />
+            <TextField
+              label="Memory"
+              placeholder="e.g. 2Gi, 4Gi"
+              value={memory}
+              onChange={(e) => setMemory(e.target.value)}
+              helperText="RAM allocation"
+              sx={{ flex: 1 }}
+            />
+            <TextField
+              label="Disk Size"
+              placeholder="e.g. 10Gi, 50Gi"
+              value={diskSize}
+              onChange={(e) => setDiskSize(e.target.value)}
+              helperText="Persistent volume"
+              sx={{ flex: 1 }}
+            />
+          </Box>
+
+          <TextField
+            label="Ports to Expose (comma-separated)"
+            placeholder="e.g. 3000, 8080"
+            fullWidth
+            value={portsStr}
+            onChange={(e) => setPortsStr(e.target.value)}
+            helperText="Specify the ports you want to forward when connecting."
+          />
+
+          <FormControlLabel
+            control={<Checkbox checked={gpuEnabled} onChange={(e) => setGpuEnabled(e.target.checked)} />}
+            label="Attach NVIDIA L4 GPU"
+          />
+          {gpuEnabled && (
+            <Typography variant="caption" color="text.secondary">
+              An NVIDIA L4 GPU will be attached. GKE Autopilot will provision a GPU node automatically (may take several minutes).
+            </Typography>
+          )}
         </Box>
       </DialogContent>
       <DialogActions>

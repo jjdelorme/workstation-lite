@@ -164,14 +164,59 @@ class K8sManager:
             except Exception as e:
                 logger.error(f"Failed to create PVC {name} in {user_ns}: {e}")
 
-    def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None):
+    def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None,
+                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None):
         if ports is None:
             ports = [3000]
         self._refresh_config()
         if not self.apps_api: return
-        
+
         container_ports = [client.V1ContainerPort(container_port=p) for p in ports]
-        
+
+        # Resource requests
+        resource_requests = {"cpu": cpu, "memory": memory}
+        resource_limits = {}
+
+        # GPU support
+        node_selector = None
+        tolerations = None
+        if gpu:
+            resource_limits["nvidia.com/gpu"] = "1"
+            node_selector = {"cloud.google.com/gke-accelerator": "nvidia-tesla-l4"}
+            tolerations = [
+                client.V1Toleration(
+                    key="nvidia.com/gpu",
+                    operator="Exists",
+                    effect="NoSchedule"
+                )
+            ]
+
+        # Volume mounts and volumes
+        volume_mounts = [
+            client.V1VolumeMount(name="home", mount_path="/home/workspace"),
+            client.V1VolumeMount(name="gcp-adc", mount_path="/var/secrets/google", read_only=True),
+        ]
+        volumes = [
+            client.V1Volume(
+                name="home",
+                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=f"{name}-pvc")
+            ),
+            client.V1Volume(
+                name="gcp-adc",
+                secret=client.V1SecretVolumeSource(
+                    secret_name="gcp-adc-credentials",
+                    optional=True
+                )
+            ),
+        ]
+
+        # Environment variables for GCP credentials
+        from app.core.config import settings
+        env_vars = [
+            client.V1EnvVar(name="GOOGLE_APPLICATION_CREDENTIALS", value="/var/secrets/google/adc.json"),
+            client.V1EnvVar(name="GOOGLE_CLOUD_PROJECT", value=settings.gcp_project_id or ""),
+        ]
+
         sts = client.V1StatefulSet(
             metadata=client.V1ObjectMeta(
                 name=name,
@@ -191,6 +236,8 @@ class K8sManager:
                             fs_group=1000
                         ),
                         image_pull_secrets=[client.V1LocalObjectReference(name="artifact-registry-key")],
+                        node_selector=node_selector,
+                        tolerations=tolerations,
                         init_containers=[
                             client.V1Container(
                                 name="fix-permissions",
@@ -209,23 +256,15 @@ class K8sManager:
                                 name=name,
                                 image=image,
                                 ports=container_ports,
+                                env=env_vars,
                                 resources=client.V1ResourceRequirements(
-                                    requests={
-                                        "cpu": "500m",
-                                        "memory": "2Gi"
-                                    }
+                                    requests=resource_requests,
+                                    limits=resource_limits if resource_limits else None
                                 ),
-                                volume_mounts=[
-                                    client.V1VolumeMount(name="home", mount_path="/home/workspace")
-                                ]
+                                volume_mounts=volume_mounts
                             )
                         ],
-                        volumes=[
-                            client.V1Volume(
-                                name="home",
-                                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=f"{name}-pvc")
-                            )
-                        ]
+                        volumes=volumes
                     )
                 )
             )
@@ -416,14 +455,15 @@ class K8sManager:
             if not (hasattr(e, 'status') and e.status == 404):
                 logger.error(f"Failed to delete config for {workstation_name} in {user_ns}: {e}")
 
-    def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None):
+    def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None,
+                                cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None):
         if ports is None:
             ports = [3000]
         self._refresh_config()
         if not self.core_api: return
         import json
         cm_name = "workstation-configs"
-        config_data = json.dumps({"image": image, "ports": ports})
+        config_data = json.dumps({"image": image, "ports": ports, "cpu": cpu, "memory": memory, "disk_size": disk_size, "gpu": gpu})
         try:
             cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
             if not cm.data: cm.data = {}
@@ -441,7 +481,7 @@ class K8sManager:
 
     def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
         self._refresh_config()
-        default_config = {"image": None, "ports": [3000]}
+        default_config = {"image": None, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None}
         if not self.core_api: return default_config
         cm_name = "workstation-configs"
         try:
@@ -452,10 +492,17 @@ class K8sManager:
             import json
             try:
                 parsed = json.loads(val)
-                return {"image": parsed.get("image"), "ports": parsed.get("ports", [3000])}
+                return {
+                    "image": parsed.get("image"),
+                    "ports": parsed.get("ports", [3000]),
+                    "cpu": parsed.get("cpu", "500m"),
+                    "memory": parsed.get("memory", "2Gi"),
+                    "disk_size": parsed.get("disk_size", "10Gi"),
+                    "gpu": parsed.get("gpu"),
+                }
             except json.JSONDecodeError:
                 # Backwards compatibility for old config format
-                return {"image": val, "ports": [3000]}
+                return {"image": val, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None}
         except Exception:
             return default_config
 
@@ -488,5 +535,61 @@ class K8sManager:
         except Exception as e:
             logger.error(f"Error scaling down idle workstations: {e}")
         return scaled_namespaces
+
+    def save_adc_secret(self, user_ns: str, adc_json: str):
+        self._refresh_config()
+        if not self.core_api: return
+        import base64
+        secret = client.V1Secret(
+            metadata=client.V1ObjectMeta(name="gcp-adc-credentials"),
+            type="Opaque",
+            data={"adc.json": base64.b64encode(adc_json.encode()).decode()}
+        )
+        try:
+            self.core_api.read_namespaced_secret(name="gcp-adc-credentials", namespace=user_ns)
+            self.core_api.replace_namespaced_secret(name="gcp-adc-credentials", namespace=user_ns, body=secret)
+        except Exception:
+            try:
+                self.core_api.create_namespaced_secret(namespace=user_ns, body=secret)
+            except Exception as e:
+                logger.error(f"Failed to create ADC secret in {user_ns}: {e}")
+
+    def check_adc_secret(self, user_ns: str) -> bool:
+        self._refresh_config()
+        if not self.core_api: return False
+        try:
+            self.core_api.read_namespaced_secret(name="gcp-adc-credentials", namespace=user_ns)
+            return True
+        except Exception:
+            return False
+
+    def list_nodes(self) -> list[dict]:
+        self._refresh_config()
+        if not self.core_api: return []
+        try:
+            nodes = self.core_api.list_node()
+            result = []
+            for node in nodes.items:
+                labels = node.metadata.labels or {}
+                allocatable = node.status.allocatable or {}
+                ready = False
+                if node.status.conditions:
+                    for cond in node.status.conditions:
+                        if cond.type == "Ready":
+                            ready = cond.status == "True"
+                            break
+                result.append({
+                    "name": node.metadata.name,
+                    "machine_type": labels.get("node.kubernetes.io/instance-type", "unknown"),
+                    "zone": labels.get("topology.kubernetes.io/zone", "unknown"),
+                    "cpu": allocatable.get("cpu", "0"),
+                    "memory": allocatable.get("memory", "0"),
+                    "gpu": allocatable.get("nvidia.com/gpu", "0"),
+                    "ready": ready,
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Error listing nodes: {e}")
+            return []
 
 k8s_manager = K8sManager()

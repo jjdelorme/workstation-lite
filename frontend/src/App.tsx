@@ -1,11 +1,13 @@
-import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton } from '@mui/material';
+import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { useState, useEffect } from 'react';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 import WorkstationEditor from './components/WorkstationEditor';
 import ConnectionInstructions from './components/ConnectionInstructions';
 import NewWorkstationDialog from './components/NewWorkstationDialog';
+import EditWorkstationDialog from './components/EditWorkstationDialog';
 import type { ImageMetadata } from './components/NewWorkstationDialog';
+import type { WorkstationConfig } from './components/EditWorkstationDialog';
 
 interface WorkstationStatus {
   name: string;
@@ -13,8 +15,13 @@ interface WorkstationStatus {
   status: string;
   image?: string;
   ports?: number[];
+  cpu?: string;
+  memory?: string;
+  disk_size?: string;
+  gpu?: string | null;
   pod_name?: string;
   pod_ready: boolean;
+  message?: string;
 }
 
 interface WorkstationListResponse {
@@ -28,6 +35,16 @@ interface AppConfig {
   account: string;
 }
 
+interface ClusterNode {
+  name: string;
+  machine_type: string;
+  zone: string;
+  cpu: string;
+  memory: string;
+  gpu: string;
+  ready: boolean;
+}
+
 function App() {
   const [workstations, setWorkstations] = useState<WorkstationStatus[]>([]);
   const [availableImages, setAvailableImages] = useState<ImageMetadata[]>([]);
@@ -38,12 +55,19 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [tabValue, setTabValue] = useState(0);
   const [isNewDialogOpen, setIsNewDialogOpen] = useState(false);
-  
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingWorkstation, setEditingWorkstation] = useState<WorkstationConfig | null>(null);
+
   // States for viewing/editing existing image Dockerfiles
   const [selectedImageName, setSelectedImageName] = useState<string | undefined>(undefined);
   const [selectedDockerfile, setSelectedDockerfile] = useState<string | undefined>(undefined);
 
-  const user_ns = "user-1"; 
+  // Infrastructure tab state
+  const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
+  const [adcExists, setAdcExists] = useState(false);
+  const [adcJson, setAdcJson] = useState('');
+
+  const user_ns = "user-1";
 
   const fetchWorkstations = async () => {
     try {
@@ -111,11 +135,40 @@ function App() {
     }
   };
 
+  const fetchNodes = async () => {
+    try {
+      const response = await fetch('/api/workstations/nodes', {
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' },
+        cache: 'no-store'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setClusterNodes(data.nodes || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch nodes:", error);
+    }
+  };
+
+  const fetchAdcStatus = async () => {
+    try {
+      const response = await fetch(`/api/workstations/${user_ns}/adc-secret`);
+      if (response.ok) {
+        const data = await response.json();
+        setAdcExists(data.exists);
+      }
+    } catch (error) {
+      console.error("Failed to fetch ADC status:", error);
+    }
+  };
+
   const fetchAll = () => {
     fetchWorkstations();
     fetchImages();
     fetchClusterStatus();
     fetchConfig();
+    fetchNodes();
+    fetchAdcStatus();
   };
 
   useEffect(() => {
@@ -123,6 +176,7 @@ function App() {
     const interval = setInterval(() => {
       fetchWorkstations();
       fetchClusterStatus();
+      fetchNodes();
     }, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -133,7 +187,7 @@ function App() {
     if (action === 'enable-gke') url = '/api/workstations/enable-gke';
     if (action === 'delete-infrastructure') url = '/api/workstations/delete-infrastructure';
     if (action === 'stop-all') url = '/api/workstations/stop-all';
-    
+
     setNotification({ type: 'info', msg: `${action.replace('-', ' ').toUpperCase()} initiated...` });
     try {
       const options: RequestInit = { method: 'POST' };
@@ -152,13 +206,13 @@ function App() {
     }
   };
 
-  const handleCreateWorkstation = async (name: string, imageUri: string, ports: number[]) => {
+  const handleCreateWorkstation = async (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null) => {
     setNotification({ type: 'info', msg: `Creating workstation ${name}...` });
     try {
       const saveResponse = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageUri, ports }),
+        body: JSON.stringify({ image: imageUri, ports, cpu, memory, disk_size: diskSize, gpu }),
       });
 
       if (saveResponse.ok) {
@@ -169,6 +223,52 @@ function App() {
       }
     } catch (error) {
       setNotification({ type: 'error', msg: `Error creating workstation: ${error}` });
+    }
+  };
+
+  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null) => {
+    setNotification({ type: 'info', msg: `Updating configuration for ${name}...` });
+    try {
+      const response = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ports, cpu, memory, disk_size: diskSize, gpu }),
+      });
+
+      if (response.ok) {
+        setNotification({ type: 'success', msg: `Configuration for ${name} updated.` });
+        fetchWorkstations();
+      } else {
+        const data = await response.json();
+        setNotification({ type: 'error', msg: `Failed to update config: ${data.detail}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', msg: `Error updating workstation: ${error}` });
+    }
+  };
+
+  const handleSaveAdc = async () => {
+    if (!adcJson.trim()) {
+      setNotification({ type: 'error', msg: 'Please paste your ADC JSON credentials.' });
+      return;
+    }
+    setNotification({ type: 'info', msg: 'Saving GCP credentials...' });
+    try {
+      const response = await fetch(`/api/workstations/${user_ns}/adc-secret`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adc_json: adcJson }),
+      });
+      if (response.ok) {
+        setNotification({ type: 'success', msg: 'GCP credentials saved successfully.' });
+        setAdcExists(true);
+        setAdcJson('');
+      } else {
+        const data = await response.json();
+        setNotification({ type: 'error', msg: `Failed to save credentials: ${data.detail}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', msg: `Error saving credentials: ${error}` });
     }
   };
 
@@ -267,7 +367,7 @@ function App() {
           {isClusterProvisioning && (
             <Box sx={{ mb: 4 }}>
               <Alert severity="info" variant="filled" sx={{ mb: 1 }}>
-                GKE Cluster is currently **{clusterStatus}**. This process usually takes 8-10 minutes. 
+                GKE Cluster is currently **{clusterStatus}**. This process usually takes 8-10 minutes.
                 Please wait until the cluster is RUNNING to start your workstation.
               </Alert>
               <LinearProgress color="info" />
@@ -275,9 +375,9 @@ function App() {
           )}
 
           {hasError && (
-            <Alert 
-              severity="error" 
-              variant="filled" 
+            <Alert
+              severity="error"
+              variant="filled"
               sx={{ mb: 4 }}
               action={
                 <Button color="inherit" size="small" onClick={() => handleAction('enable-gke', '')}>
@@ -307,15 +407,15 @@ function App() {
             <Box>
               <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Typography variant="h5">Active Workstations ({workstations.length})</Typography>
-                <Button 
-                  variant="contained" 
-                  onClick={() => setIsNewDialogOpen(true)} 
+                <Button
+                  variant="contained"
+                  onClick={() => setIsNewDialogOpen(true)}
                   disabled={!isClusterReady}
                 >
                   New Workstation
                 </Button>
               </Box>
-              
+
               <Grid container spacing={2}>
                 {workstations.length === 0 && !loading && (
                   <Grid size={12}>
@@ -331,15 +431,19 @@ function App() {
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                           <Typography variant="h6" component="div">{ws.name}</Typography>
                           <Box>
-                            <Chip 
-                              label={ws.status} 
-                              size="small" 
-                              color={ws.status === 'RUNNING' ? 'success' : ws.status === 'STOPPED' ? 'default' : 'info'} 
+                            <Chip
+                              label={ws.status}
+                              size="small"
+                              color={
+                                ws.status === 'RUNNING' ? 'success' :
+                                ws.status === 'ERROR' ? 'error' :
+                                ws.status === 'STOPPED' ? 'default' : 'info'
+                              }
                               sx={{ mr: 1 }}
                             />
-                            <IconButton 
-                              size="small" 
-                              color="error" 
+                            <IconButton
+                              size="small"
+                              color="error"
                               onClick={() => {
                                 if (window.confirm(`DANGER: Are you sure you want to delete workstation "${ws.name}"? This will permanently destroy the environment and ALL DATA stored in its home directory.`)) {
                                   handleAction('delete', ws.name);
@@ -350,9 +454,26 @@ function App() {
                             </IconButton>
                           </Box>
                         </Box>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontFamily: 'monospace' }}>
+
+                        {ws.status === 'PROVISIONING' && (
+                          <LinearProgress sx={{ mb: 1 }} />
+                        )}
+
+                        {ws.status === 'ERROR' && ws.message && (
+                          <Alert severity="error" sx={{ mb: 1, fontSize: '0.75rem' }}>
+                            {ws.message}
+                          </Alert>
+                        )}
+
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
                           Image: {ws.image?.split('/').pop()?.split('@')[0]}
                         </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
+                          CPU: {ws.cpu || '500m'} | Mem: {ws.memory || '2Gi'} | Disk: {ws.disk_size || '10Gi'}
+                        </Typography>
+                        {ws.gpu && (
+                          <Chip label={`GPU: ${ws.gpu.toUpperCase()}`} size="small" color="secondary" sx={{ mb: 0.5 }} />
+                        )}
                         {ws.ports && ws.ports.length > 0 && (
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontFamily: 'monospace' }}>
                             Ports: {ws.ports.join(', ')}
@@ -361,25 +482,44 @@ function App() {
                         {ws.pod_name && (
                           <Chip label={`Pod: ${ws.pod_name}`} size="small" variant="outlined" sx={{ mt: 1 }} color={ws.pod_ready ? "success" : "warning"} />
                         )}
-                        
+
                         {ws.status === 'RUNNING' && (
                           <ConnectionInstructions userNs={ws.user_ns} workstationName={ws.name} ports={ws.ports} />
                         )}
                       </CardContent>
                       <Divider />
                       <CardActions sx={{ justifyContent: 'flex-end', p: 2 }}>
-                        <Button 
-                          size="small" 
-                          variant="outlined" 
-                          color="error" 
+                        {ws.status === 'STOPPED' && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => {
+                              setEditingWorkstation({
+                                name: ws.name,
+                                ports: ws.ports || [],
+                                cpu: ws.cpu || '500m',
+                                memory: ws.memory || '2Gi',
+                                disk_size: ws.disk_size || '10Gi',
+                                gpu: ws.gpu || null,
+                              });
+                              setIsEditDialogOpen(true);
+                            }}
+                          >
+                            Edit Config
+                          </Button>
+                        )}
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="error"
                           onClick={() => handleAction('stop', ws.name)}
                           disabled={ws.status === 'STOPPED'}
                         >
                           Stop
                         </Button>
-                        <Button 
-                          size="small" 
-                          variant="contained" 
+                        <Button
+                          size="small"
+                          variant="contained"
                           onClick={() => handleAction('start', ws.name)}
                           disabled={ws.status === 'RUNNING' || ws.status === 'PROVISIONING'}
                         >
@@ -408,8 +548,8 @@ function App() {
                         </ListItem>
                       )}
                       {availableImages.map((img) => (
-                        <ListItem 
-                          key={img.tags?.[0] || img.uri || Math.random().toString()} 
+                        <ListItem
+                          key={img.tags?.[0] || img.uri || Math.random().toString()}
                           disablePadding
                           secondaryAction={
                             <IconButton edge="end" aria-label="delete" onClick={(e) => handleDeleteImage(e, img)}>
@@ -418,9 +558,9 @@ function App() {
                           }
                         >
                           <ListItemButton divider onClick={() => handleImageClick(img)}>
-                            <ListItemText 
-                              primary={img.tags && img.tags.length > 0 ? img.tags[0] : "Untitled Image"} 
-                              secondary={img.uri ? img.uri.split('/').pop()?.split('@')[0] : "Draft Recipe (Unbuilt)"} 
+                            <ListItemText
+                              primary={img.tags && img.tags.length > 0 ? img.tags[0] : "Untitled Image"}
+                              secondary={img.uri ? img.uri.split('/').pop()?.split('@')[0] : "Draft Recipe (Unbuilt)"}
                             />
                           </ListItemButton>
                         </ListItem>
@@ -435,7 +575,7 @@ function App() {
                   <Typography variant="body2" color="text.secondary" paragraph>
                     Define a custom Dockerfile to create a reusable environment template. Click a built image to view its source.
                   </Typography>
-                  <WorkstationEditor 
+                  <WorkstationEditor
                     initialDockerfile={selectedDockerfile}
                     initialName={selectedImageName}
                     onBuildSuccess={fetchImages}
@@ -448,12 +588,14 @@ function App() {
           {tabValue === 2 && (
             <Box>
               <Typography variant="h5" gutterBottom>Infrastructure Management</Typography>
+
+              {/* Cluster Status */}
               <Paper sx={{ p: 3, mt: 2 }}>
                 <Grid container spacing={3} alignItems="center">
                   <Grid size={{ xs: 12, md: 6 }}>
                     <Typography variant="subtitle1" gutterBottom>Cluster Status</Typography>
-                    <Chip 
-                      label={clusterStatus || 'OFFLINE'} 
+                    <Chip
+                      label={clusterStatus || 'OFFLINE'}
                       color={isClusterReady ? 'success' : isClusterProvisioning ? 'info' : 'default'}
                     />
                     <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
@@ -461,8 +603,8 @@ function App() {
                     </Typography>
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }} sx={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-end' }}>
-                    <Button 
-                      variant="contained" 
+                    <Button
+                      variant="contained"
                       onClick={() => handleAction('init', '')}
                       disabled={isClusterReady || isClusterProvisioning}
                       fullWidth
@@ -470,8 +612,8 @@ function App() {
                     >
                       {isClusterProvisioning ? 'Provisioning...' : 'Initialize Infrastructure'}
                     </Button>
-                    <Button 
-                      variant="outlined" 
+                    <Button
+                      variant="outlined"
                       color="warning"
                       onClick={() => {
                         if (window.confirm('Are you sure you want to stop all active workstations?')) {
@@ -484,8 +626,8 @@ function App() {
                     >
                       Stop All Workstations
                     </Button>
-                    <Button 
-                      variant="outlined" 
+                    <Button
+                      variant="outlined"
                       color="error"
                       onClick={() => {
                         if (window.confirm('WARNING: This will permanently delete your GKE Autopilot cluster and all data not backed up. Are you sure?')) {
@@ -501,22 +643,104 @@ function App() {
                   </Grid>
                 </Grid>
               </Paper>
+
+              {/* GCP Credentials */}
+              <Paper sx={{ p: 3, mt: 3 }}>
+                <Typography variant="subtitle1" gutterBottom>GCP Credentials (ADC)</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Upload Application Default Credentials JSON to inject into workstation pods. This sets GOOGLE_APPLICATION_CREDENTIALS and GOOGLE_CLOUD_PROJECT automatically.
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                  <Typography variant="body2">Status:</Typography>
+                  <Chip
+                    label={adcExists ? 'Configured' : 'Not Configured'}
+                    color={adcExists ? 'success' : 'default'}
+                    size="small"
+                  />
+                </Box>
+                <TextField
+                  label="ADC JSON"
+                  placeholder='Paste your application_default_credentials.json contents here'
+                  multiline
+                  rows={4}
+                  fullWidth
+                  value={adcJson}
+                  onChange={(e) => setAdcJson(e.target.value)}
+                  sx={{ mb: 2, fontFamily: 'monospace' }}
+                />
+                <Button variant="contained" onClick={handleSaveAdc} disabled={!adcJson.trim()}>
+                  Save Credentials
+                </Button>
+              </Paper>
+
+              {/* Cluster Nodes */}
+              {isClusterReady && (
+                <Paper sx={{ p: 3, mt: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom>Cluster Nodes ({clusterNodes.length})</Typography>
+                  {clusterNodes.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      No nodes currently active. Nodes are provisioned automatically by GKE Autopilot when workstations start.
+                    </Typography>
+                  ) : (
+                    <TableContainer>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Name</TableCell>
+                            <TableCell>Machine Type</TableCell>
+                            <TableCell>Zone</TableCell>
+                            <TableCell>CPU</TableCell>
+                            <TableCell>Memory</TableCell>
+                            <TableCell>GPU</TableCell>
+                            <TableCell>Status</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {clusterNodes.map((node) => (
+                            <TableRow key={node.name}>
+                              <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{node.name}</TableCell>
+                              <TableCell>{node.machine_type}</TableCell>
+                              <TableCell>{node.zone}</TableCell>
+                              <TableCell>{node.cpu}</TableCell>
+                              <TableCell>{node.memory}</TableCell>
+                              <TableCell>{node.gpu !== '0' ? node.gpu : '-'}</TableCell>
+                              <TableCell>
+                                <Chip label={node.ready ? 'Ready' : 'Not Ready'} size="small" color={node.ready ? 'success' : 'warning'} />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                </Paper>
+              )}
             </Box>
           )}
         </Box>
       </Container>
 
-      <NewWorkstationDialog 
+      <NewWorkstationDialog
         open={isNewDialogOpen}
         onClose={() => setIsNewDialogOpen(false)}
         onConfirm={handleCreateWorkstation}
         availableImages={availableImages}
       />
 
+      <EditWorkstationDialog
+        open={isEditDialogOpen}
+        onClose={() => {
+          setIsEditDialogOpen(false);
+          setEditingWorkstation(null);
+        }}
+        onConfirm={handleUpdateWorkstation}
+        workstation={editingWorkstation}
+      />
+
       {notification && (
-        <Snackbar 
-          open={!!notification} 
-          autoHideDuration={6000} 
+        <Snackbar
+          open={!!notification}
+          autoHideDuration={6000}
           onClose={() => setNotification(null)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         >

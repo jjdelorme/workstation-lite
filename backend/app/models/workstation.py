@@ -15,6 +15,10 @@ class WorkstationResponse(BaseModel):
     status: WorkstationStatus
     image: Optional[str] = None
     ports: list[int] = []
+    cpu: str = "500m"
+    memory: str = "2Gi"
+    disk_size: str = "10Gi"
+    gpu: Optional[str] = None
     pod_name: Optional[str] = None
     pod_ready: bool = False
     message: Optional[str] = None
@@ -31,5 +35,9 @@ class BuildRequest(BaseModel):
     dockerfile: str
 
 class SaveConfigRequest(BaseModel):
-    image: str
+    image: Optional[str] = None
     ports: Optional[list[int]] = [3000]
+    cpu: Optional[str] = "500m"
+    memory: Optional[str] = "2Gi"
+    disk_size: Optional[str] = "10Gi"
+    gpu: Optional[str] = None
