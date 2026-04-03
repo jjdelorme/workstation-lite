@@ -142,7 +142,7 @@ class K8sManager:
     def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None,
                           cpu: str = "500m", memory: str = "2Gi", gpu: str = None, env_vars: dict = None):
         if ports is None:
-            ports = [3000]
+            ports = []
         self._refresh_config()
         if not self.apps_api: return
 
@@ -484,7 +484,7 @@ class K8sManager:
                                 cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None,
                                 env_vars: dict = None):
         if ports is None:
-            ports = [3000]
+            ports = []
         self._refresh_config()
         if not self.core_api: return
         import json
@@ -507,7 +507,7 @@ class K8sManager:
 
     def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
         self._refresh_config()
-        default_config = {"image": None, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
+        default_config = {"image": None, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
         if not self.core_api: return default_config
         cm_name = "workstation-configs"
         try:
@@ -520,7 +520,7 @@ class K8sManager:
                 parsed = json.loads(val)
                 return {
                     "image": parsed.get("image"),
-                    "ports": parsed.get("ports", [3000]),
+                    "ports": parsed.get("ports", []),
                     "cpu": parsed.get("cpu", "500m"),
                     "memory": parsed.get("memory", "2Gi"),
                     "disk_size": parsed.get("disk_size", "10Gi"),
@@ -529,7 +529,7 @@ class K8sManager:
                 }
             except json.JSONDecodeError:
                 # Backwards compatibility for old config format
-                return {"image": val, "ports": [3000], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
+                return {"image": val, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
         except Exception:
             return default_config
 

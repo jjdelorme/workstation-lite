@@ -37,7 +37,7 @@ class BuildRequest(BaseModel):
 
 class SaveConfigRequest(BaseModel):
     image: Optional[str] = None
-    ports: Optional[list[int]] = [3000]
+    ports: Optional[list[int]] = []
     cpu: Optional[str] = "500m"
     memory: Optional[str] = "2Gi"
     disk_size: Optional[str] = "10Gi"

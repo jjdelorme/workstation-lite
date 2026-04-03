@@ -18,7 +18,7 @@ const ConnectionInstructions: React.FC<ConnectionInstructionsProps> = ({ userNs,
     navigator.clipboard.writeText(text);
   };
   
-  const portsLabel = ports && ports.length > 0 ? ports.join(', ') : '3000';
+  const portsLabel = ports && ports.length > 0 ? ports.join(', ') : 'none';
 
   return (
     <Paper sx={{ p: 2, mt: 2, bgcolor: '#f5f5f5' }} elevation={1}>

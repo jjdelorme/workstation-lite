@@ -22,7 +22,7 @@ interface NewWorkstationDialogProps {
 const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClose, onConfirm, availableImages }) => {
   const [name, setName] = useState('');
   const [selectedImage, setSelectedImage] = useState('');
-  const [portsStr, setPortsStr] = useState('3000');
+  const [portsStr, setPortsStr] = useState('');
   const [cpu, setCpu] = useState('500m');
   const [memory, setMemory] = useState('2Gi');
   const [diskSize, setDiskSize] = useState('10Gi');
@@ -37,7 +37,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
       onConfirm(
         name,
         selectedImage,
-        ports.length > 0 ? ports : [3000],
+        ports,
         cpu,
         memory,
         diskSize,
@@ -46,7 +46,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
       );
       setName('');
       setSelectedImage('');
-      setPortsStr('3000');
+      setPortsStr('');
       setCpu('500m');
       setMemory('2Gi');
       setDiskSize('10Gi');

@@ -89,6 +89,5 @@ gcloud run services proxy workstation-lite --region us-central1 --port 3333
 
 ## Important Notes & Gotchas
 - **Segfault Fix:** `main.py` sets `CLOUDSDK_CONTEXT_AWARE_USE_CLIENT_CERTIFICATE=false` and `GOOGLE_API_USE_CLIENT_CERTIFICATE=false` at module load. This prevents fatal segmentation faults during mTLS cert provider execution. **Do not remove these lines or move them after GCP imports.**
-- `start.sh` is a local utility for port-forwarding and connecting to a running workstation pod via `kubectl`.
 - `nuke_everything.py` destroys all project resources. Use with extreme caution.
 - Root-level `test_*.py` files are ad-hoc integration/debugging scripts and are **not** part of the formal test suite (which lives in `backend/tests/`).
