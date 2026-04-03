@@ -1,71 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import { Box, Button, Typography, Paper, Alert, Snackbar, TextField, LinearProgress } from '@mui/material';
-
-export const DEFAULT_DOCKERFILE = `FROM gitpod/openvscode-server:latest
-
-USER root
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    curl \\
-    git \\
-    wget \\
-    zsh \\
-    vim \\
-    tmux \\
-    jq \\
-    build-essential \\
-    python3 \\
-    python3-pip \\
-    golang-go \\
-    fontconfig
-
-# Install MesloLGS NF Fonts for Powerlevel10k
-RUN mkdir -p /usr/share/fonts/truetype/meslo && \\
-    wget -P /usr/share/fonts/truetype/meslo https://github.com/romkatv/dotfiles-public/raw/master/.local/share/fonts/NerdFonts/MesloLGS%20NF%20Regular.ttf && \\
-    wget -P /usr/share/fonts/truetype/meslo https://github.com/romkatv/dotfiles-public/raw/master/.local/share/fonts/NerdFonts/MesloLGS%20NF%20Bold.ttf && \\
-    wget -P /usr/share/fonts/truetype/meslo https://github.com/romkatv/dotfiles-public/raw/master/.local/share/fonts/NerdFonts/MesloLGS%20NF%20Italic.ttf && \\
-    wget -P /usr/share/fonts/truetype/meslo https://github.com/romkatv/dotfiles-public/raw/master/.local/share/fonts/NerdFonts/MesloLGS%20NF%20Bold%20Italic.ttf && \\
-    fc-cache -fv
-
-# Install Node.js (via NVM)
-ENV NVM_DIR /home/workspace/.nvm
-RUN mkdir -p $NVM_DIR && \\
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \\
-    . $NVM_DIR/nvm.sh && \\
-    nvm install --lts && \\
-    nvm use --lts
-
-# Install Cloud Tools (gcloud SDK via binary to allow components update)
-RUN cd /usr/local && \\
-    curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz && \\
-    tar -xf google-cloud-cli-linux-x86_64.tar.gz && \\
-    rm google-cloud-cli-linux-x86_64.tar.gz && \\
-    ./google-cloud-sdk/install.sh --quiet
-ENV PATH $PATH:/usr/local/google-cloud-sdk/bin
-
-USER openvscode-server
-
-# Install Oh My Zsh
-RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-
-# Install Powerlevel10k
-RUN git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k
-
-# Configure Zsh and Tmux per TMUX-SSH-OHMYZSH.md
-RUN sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="powerlevel10k\\/powerlevel10k"/' ~/.zshrc && \\
-    echo '\\n# Tmux/SSH UTF-8 and Color configuration' >> ~/.zshrc && \\
-    echo 'export LANG=en_US.UTF-8' >> ~/.zshrc && \\
-    echo 'export LC_ALL=en_US.UTF-8' >> ~/.zshrc && \\
-    echo '[[ -z "$TMUX" ]] && export TERM=xterm-256color' >> ~/.zshrc && \\
-    echo '# Tmux configuration' > ~/.tmux.conf && \\
-    echo 'set -g default-terminal "screen-256color"' >> ~/.tmux.conf && \\
-    echo 'set -g default-shell /bin/zsh' >> ~/.tmux.conf
-
-# Ensure persistence for /home/workspace is utilized for tools
-ENV PYTHONUSERBASE=/home/workspace/.local
-`;
+import DEFAULT_DOCKERFILE from '@root/templates/Dockerfile.template?raw';
 
 interface WorkstationEditorProps {
   initialDockerfile?: string;
