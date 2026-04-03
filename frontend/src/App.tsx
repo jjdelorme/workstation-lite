@@ -1,8 +1,9 @@
-import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip } from '@mui/material';
+import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
 import { useState, useEffect } from 'react';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import WorkstationEditor from './components/WorkstationEditor';
 import ConnectionInstructions from './components/ConnectionInstructions';
 import NewWorkstationDialog from './components/NewWorkstationDialog';
@@ -495,6 +496,22 @@ function App() {
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontFamily: 'monospace' }}>
                             Ports: {ws.ports.join(', ')}
                           </Typography>
+                        )}
+                        {ws.env_vars && Object.keys(ws.env_vars).length > 0 && (
+                          <Accordion disableGutters elevation={0} sx={{ mt: 1, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
+                            <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: 'auto', '& .MuiAccordionSummary-content': { m: 0 } }}>
+                              <Typography variant="caption" color="text.secondary">
+                                Environment Variables ({Object.keys(ws.env_vars).length})
+                              </Typography>
+                            </AccordionSummary>
+                            <AccordionDetails sx={{ p: 0, pt: 0.5 }}>
+                              {Object.entries(ws.env_vars).map(([key, value]) => (
+                                <Typography key={key} variant="caption" color="text.secondary" sx={{ display: 'block', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                                  {key}={value}
+                                </Typography>
+                              ))}
+                            </AccordionDetails>
+                          </Accordion>
                         )}
                         {ws.pod_name && (
                           <Chip label={`Pod: ${ws.pod_name}`} size="small" variant="outlined" sx={{ mt: 1 }} color={ws.pod_ready ? "success" : "warning"} />
