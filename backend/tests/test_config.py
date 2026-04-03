@@ -6,7 +6,7 @@ def test_settings_defaults():
     settings = Settings()
     # Assuming default cluster name from plan
     assert settings.cluster_name == "workstation-cluster"
-    assert settings.workstation_image == "codercom/code-server:latest"
+    assert settings.workstation_image == "gitpod/openvscode-server:latest"
     assert settings.region == "us-central1"
 
 def test_settings_env_override():
