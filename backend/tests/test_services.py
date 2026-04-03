@@ -202,6 +202,9 @@ def test_seed_service_catalog_templates(mock_k8s_client):
     mock_core, _ = mock_k8s_client
     manager = K8sManager()
 
+    # read raises 404 so seed falls through to create
+    mock_core.read_namespaced_config_map.side_effect = Exception("Not Found")
+
     manager.seed_service_catalog_templates()
 
     assert mock_core.create_namespaced_config_map.called
@@ -240,8 +243,10 @@ def test_get_service_catalog_templates_seeds_on_404(mock_k8s_client):
     mock_core, _ = mock_k8s_client
     manager = K8sManager()
 
-    # First call raises 404 exception, triggering seed, second call returns data
-    not_found_exc = type('ApiException', (Exception,), {'status': 404})()
+    # Call sequence: get reads (404) → seed reads (404) → seed creates →
+    #                get retries read → returns data
+    not_found_exc1 = type('ApiException', (Exception,), {'status': 404})()
+    not_found_exc2 = type('ApiException', (Exception,), {'status': 404})()
     mock_cm = MagicMock()
     mock_cm.data = {
         "redis": json.dumps({
@@ -252,7 +257,7 @@ def test_get_service_catalog_templates_seeds_on_404(mock_k8s_client):
             "required_env_vars": {},
         }),
     }
-    mock_core.read_namespaced_config_map.side_effect = [not_found_exc, mock_cm]
+    mock_core.read_namespaced_config_map.side_effect = [not_found_exc1, not_found_exc2, mock_cm]
 
     templates = manager.get_service_catalog_templates()
     assert mock_core.create_namespaced_config_map.called  # seed was called
