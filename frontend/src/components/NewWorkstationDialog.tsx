@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, MenuItem, Select, FormControl, InputLabel, Box, Typography, Divider, FormControlLabel, Checkbox } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, MenuItem, Select, FormControl, InputLabel, Box, Typography, Divider, FormControlLabel, Checkbox, IconButton } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
 
 export interface ImageMetadata {
   uri: string;
   tags: string[];
   update_time: string;
+  build_id?: string | null;
+  build_status?: string | null;
+  build_log_url?: string | null;
 }
 
 interface NewWorkstationDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null) => void;
+  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>) => void;
   availableImages: ImageMetadata[];
 }
 
@@ -22,10 +27,13 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
   const [memory, setMemory] = useState('2Gi');
   const [diskSize, setDiskSize] = useState('10Gi');
   const [gpuEnabled, setGpuEnabled] = useState(false);
+  const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>([]);
 
   const handleConfirm = () => {
     if (name && selectedImage) {
       const ports = portsStr.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
+      const envVars: Record<string, string> = {};
+      envEntries.forEach(e => { if (e.key.trim()) envVars[e.key.trim()] = e.value; });
       onConfirm(
         name,
         selectedImage,
@@ -33,7 +41,8 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
         cpu,
         memory,
         diskSize,
-        gpuEnabled ? 'nvidia-l4' : null
+        gpuEnabled ? 'nvidia-l4' : null,
+        envVars
       );
       setName('');
       setSelectedImage('');
@@ -42,6 +51,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
       setMemory('2Gi');
       setDiskSize('10Gi');
       setGpuEnabled(false);
+      setEnvEntries([]);
       onClose();
     }
   };
@@ -135,6 +145,42 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
           {gpuEnabled && (
             <Typography variant="caption" color="text.secondary">
               An NVIDIA L4 GPU will be attached. GKE Autopilot will provision a GPU node automatically (may take several minutes).
+            </Typography>
+          )}
+
+          <Divider />
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography variant="subtitle2" color="text.secondary">Environment Variables</Typography>
+            <IconButton size="small" onClick={() => setEnvEntries([...envEntries, { key: '', value: '' }])}>
+              <AddIcon fontSize="small" />
+            </IconButton>
+          </Box>
+          {envEntries.map((entry, idx) => (
+            <Box key={idx} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <TextField
+                label="Name"
+                size="small"
+                value={entry.key}
+                onChange={(e) => { const next = [...envEntries]; next[idx].key = e.target.value; setEnvEntries(next); }}
+                sx={{ flex: 1 }}
+                placeholder="MY_VAR"
+              />
+              <TextField
+                label="Value"
+                size="small"
+                value={entry.value}
+                onChange={(e) => { const next = [...envEntries]; next[idx].value = e.target.value; setEnvEntries(next); }}
+                sx={{ flex: 2 }}
+                placeholder="some-value"
+              />
+              <IconButton size="small" onClick={() => setEnvEntries(envEntries.filter((_, i) => i !== idx))}>
+                <RemoveCircleOutlineIcon fontSize="small" color="error" />
+              </IconButton>
+            </Box>
+          ))}
+          {envEntries.length === 0 && (
+            <Typography variant="caption" color="text.secondary">
+              No environment variables configured. Click + to add one.
             </Typography>
           )}
         </Box>

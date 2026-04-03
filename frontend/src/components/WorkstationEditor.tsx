@@ -71,9 +71,12 @@ interface WorkstationEditorProps {
   initialDockerfile?: string;
   initialName?: string;
   onBuildSuccess?: () => void;
+  onBuildStart?: () => void;
+  initialBuildId?: string;
+  initialBuildStatus?: string;
 }
 
-const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile, initialName, onBuildSuccess }) => {
+const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile, initialName, onBuildSuccess, onBuildStart, initialBuildId, initialBuildStatus }) => {
   const [dockerfile, setDockerfile] = useState(initialDockerfile || DEFAULT_DOCKERFILE);
   const [name, setName] = useState(initialName || 'workstation');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', msg: string } | null>(null);
@@ -85,6 +88,15 @@ const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile
     if (initialDockerfile) setDockerfile(initialDockerfile);
     if (initialName) setName(initialName);
   }, [initialDockerfile, initialName]);
+
+  // Restore active build from parent-provided props (e.g. after navigating back)
+  useEffect(() => {
+    if (initialBuildId && initialBuildStatus) {
+      setActiveBuild({ id: initialBuildId, status: initialBuildStatus });
+    } else {
+      setActiveBuild(null);
+    }
+  }, [initialBuildId, initialBuildStatus]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -146,6 +158,7 @@ const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile
       if (response.ok) {
         setStatus({ type: 'success', msg: 'Build triggered successfully! Monitoring progress...' });
         setActiveBuild({ id: data.build_id, status: 'QUEUED' });
+        if (onBuildStart) onBuildStart();
       } else {
         setStatus({ type: 'error', msg: `Build failed: ${data.detail || data.message}` });
       }

@@ -1,7 +1,8 @@
-import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
+import { AppBar, Toolbar, Typography, Container, Button, Box, Paper, Snackbar, Alert, LinearProgress, Chip, CircularProgress, Divider, Card, CardContent, CardActions, IconButton, Tabs, Tab, List, ListItem, ListItemText, Grid, ListItemButton, TextField, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip } from '@mui/material';
 import { useState, useEffect } from 'react';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import WorkstationEditor from './components/WorkstationEditor';
 import ConnectionInstructions from './components/ConnectionInstructions';
 import NewWorkstationDialog from './components/NewWorkstationDialog';
@@ -19,6 +20,7 @@ interface WorkstationStatus {
   memory?: string;
   disk_size?: string;
   gpu?: string | null;
+  env_vars?: Record<string, string>;
   pod_name?: string;
   pod_ready: boolean;
   message?: string;
@@ -171,6 +173,12 @@ function App() {
     fetchAdcStatus();
   };
 
+  const TERMINAL_BUILD_STATUSES = ['SUCCESS', 'FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED', 'EXPIRED'];
+
+  const hasActiveBuilds = availableImages.some(
+    img => img.build_status && !TERMINAL_BUILD_STATUSES.includes(img.build_status)
+  );
+
   useEffect(() => {
     fetchAll();
     const interval = setInterval(() => {
@@ -180,6 +188,15 @@ function App() {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Poll images when there are active builds
+  useEffect(() => {
+    if (!hasActiveBuilds) return;
+    const interval = setInterval(() => {
+      fetchImages();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasActiveBuilds]);
 
   const handleAction = async (action: 'start' | 'stop' | 'init' | 'snapshot' | 'enable-gke' | 'delete' | 'delete-infrastructure' | 'stop-all', name: string) => {
     let url = `/api/workstations/${user_ns}/${action}/${name}`;
@@ -206,13 +223,13 @@ function App() {
     }
   };
 
-  const handleCreateWorkstation = async (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null) => {
+  const handleCreateWorkstation = async (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string> = {}) => {
     setNotification({ type: 'info', msg: `Creating workstation ${name}...` });
     try {
       const saveResponse = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageUri, ports, cpu, memory, disk_size: diskSize, gpu }),
+        body: JSON.stringify({ image: imageUri, ports, cpu, memory, disk_size: diskSize, gpu, env_vars: envVars }),
       });
 
       if (saveResponse.ok) {
@@ -226,13 +243,13 @@ function App() {
     }
   };
 
-  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null) => {
+  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string> = {}) => {
     setNotification({ type: 'info', msg: `Updating configuration for ${name}...` });
     try {
       const response = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ports, cpu, memory, disk_size: diskSize, gpu }),
+        body: JSON.stringify({ ports, cpu, memory, disk_size: diskSize, gpu, env_vars: envVars }),
       });
 
       if (response.ok) {
@@ -501,6 +518,7 @@ function App() {
                                 memory: ws.memory || '2Gi',
                                 disk_size: ws.disk_size || '10Gi',
                                 gpu: ws.gpu || null,
+                                env_vars: ws.env_vars || {},
                               });
                               setIsEditDialogOpen(true);
                             }}
@@ -547,24 +565,58 @@ function App() {
                           <ListItemText primary="No images built yet." secondary="Build your first image configuration below." />
                         </ListItem>
                       )}
-                      {availableImages.map((img) => (
-                        <ListItem
-                          key={img.tags?.[0] || img.uri || Math.random().toString()}
-                          disablePadding
-                          secondaryAction={
-                            <IconButton edge="end" aria-label="delete" onClick={(e) => handleDeleteImage(e, img)}>
-                              <DeleteIcon />
-                            </IconButton>
-                          }
-                        >
-                          <ListItemButton divider onClick={() => handleImageClick(img)}>
-                            <ListItemText
-                              primary={img.tags && img.tags.length > 0 ? img.tags[0] : "Untitled Image"}
-                              secondary={img.uri ? img.uri.split('/').pop()?.split('@')[0] : "Draft Recipe (Unbuilt)"}
-                            />
-                          </ListItemButton>
-                        </ListItem>
-                      ))}
+                      {availableImages.map((img) => {
+                        const isBuilding = img.build_status && !TERMINAL_BUILD_STATUSES.includes(img.build_status);
+                        const isBuildFailed = img.build_status && ['FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED', 'EXPIRED'].includes(img.build_status);
+                        const isBuildSuccess = img.build_status === 'SUCCESS';
+
+                        return (
+                          <ListItem
+                            key={img.tags?.[0] || img.uri || Math.random().toString()}
+                            disablePadding
+                            secondaryAction={
+                              <IconButton edge="end" aria-label="delete" onClick={(e) => handleDeleteImage(e, img)}>
+                                <DeleteIcon />
+                              </IconButton>
+                            }
+                          >
+                            <ListItemButton divider onClick={() => handleImageClick(img)}>
+                              <ListItemText
+                                primary={
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <span>{img.tags && img.tags.length > 0 ? img.tags[0] : "Untitled Image"}</span>
+                                    {isBuilding && (
+                                      <Tooltip title={`Building... (${img.build_status})`}>
+                                        <Chip
+                                          icon={<CircularProgress size={12} />}
+                                          label={img.build_status}
+                                          size="small"
+                                          color="info"
+                                          variant="outlined"
+                                          sx={{ height: 22, '& .MuiChip-label': { px: 0.5, fontSize: '0.7rem' } }}
+                                        />
+                                      </Tooltip>
+                                    )}
+                                    {isBuildFailed && (
+                                      <Tooltip title={`Build failed: ${img.build_status}`}>
+                                        <Chip
+                                          icon={<ErrorOutlineIcon sx={{ fontSize: 14 }} />}
+                                          label="FAILED"
+                                          size="small"
+                                          color="error"
+                                          variant="outlined"
+                                          sx={{ height: 22, '& .MuiChip-label': { px: 0.5, fontSize: '0.7rem' } }}
+                                        />
+                                      </Tooltip>
+                                    )}
+                                  </Box>
+                                }
+                                secondary={img.uri ? img.uri.split('/').pop()?.split('@')[0] : "Draft Recipe (Unbuilt)"}
+                              />
+                            </ListItemButton>
+                          </ListItem>
+                        );
+                      })}
                     </List>
                   </Paper>
                 </Grid>
@@ -579,6 +631,17 @@ function App() {
                     initialDockerfile={selectedDockerfile}
                     initialName={selectedImageName}
                     onBuildSuccess={fetchImages}
+                    onBuildStart={fetchImages}
+                    initialBuildId={
+                      selectedImageName
+                        ? availableImages.find(img => img.tags?.[0] === selectedImageName)?.build_id ?? undefined
+                        : undefined
+                    }
+                    initialBuildStatus={
+                      selectedImageName
+                        ? availableImages.find(img => img.tags?.[0] === selectedImageName)?.build_status ?? undefined
+                        : undefined
+                    }
                   />
                 </Grid>
               </Grid>

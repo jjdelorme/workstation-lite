@@ -231,13 +231,25 @@ def list_available_images(user_ns: str = "user-1"):
         # 2. Get saved configurations (Templates/Recipes) from ConfigMap
         k8s = get_k8s_manager()
         recipe_names = []
-        
+
         try:
             sources_cm = k8s.core_api.read_namespaced_config_map(name="image-dockerfiles", namespace=user_ns)
             if sources_cm.data:
                 recipe_names = list(sources_cm.data.keys())
-        except Exception: 
+        except Exception:
             pass
+
+        # 2b. Get stored build IDs and check their status
+        build_ids = k8s.get_image_build_ids(user_ns)
+        build_statuses = {}
+        if build_ids and settings.gcp_project_id:
+            cb = get_cb_manager()
+            for img_name, bid in build_ids.items():
+                try:
+                    status_info = cb.get_build_status(settings.gcp_project_id, bid)
+                    build_statuses[img_name] = status_info
+                except Exception as e:
+                    logger.warning(f"Failed to check build status for {img_name} (build {bid}): {e}")
 
         # 3. Merge and Enrich
         final_list = []
@@ -257,7 +269,10 @@ def list_available_images(user_ns: str = "user-1"):
                 "tags": [name],
                 "update_time": None,
                 "is_recipe": True,
-                "has_dockerfile": True
+                "has_dockerfile": True,
+                "build_id": None,
+                "build_status": None,
+                "build_log_url": None,
             }
 
             # Check if we have a matching physical image in the registry
@@ -266,7 +281,14 @@ def list_available_images(user_ns: str = "user-1"):
                 recipe_data["uri"] = match["uri"]
                 recipe_data["update_time"] = match["update_time"]
                 seen_uris.add(expected_base_uri)
-            
+
+            # Attach build status if available
+            if name in build_statuses:
+                bs = build_statuses[name]
+                recipe_data["build_id"] = bs.get("id")
+                recipe_data["build_status"] = bs.get("status")
+                recipe_data["build_log_url"] = bs.get("log_url")
+
             final_list.append(recipe_data)
 
         # 4. Add any remaining physical images that aren't mapped to a recipe (orphan artifacts)
@@ -336,7 +358,8 @@ def save_workstation_config_endpoint(user_ns: str, name: str, req: SaveConfigReq
         memory = req.memory if req.memory is not None else current_config.get("memory", "2Gi")
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "10Gi")
         gpu = req.gpu if req.gpu is not None else current_config.get("gpu")
-        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu)
+        env_vars = req.env_vars if req.env_vars is not None else current_config.get("env_vars", {})
+        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu, env_vars)
         return {"status": "ok", "message": f"Config for {name} saved"}
     except Exception as e:
         logger.error(f"Error saving config: {e}")
@@ -359,6 +382,7 @@ def list_all_workstations(user_ns: str):
                 memory=config.get("memory", "2Gi"),
                 disk_size=config.get("disk_size", "10Gi"),
                 gpu=config.get("gpu"),
+                env_vars=config.get("env_vars", {}),
                 pod_name=w.get("pod_name"),
                 pod_ready=w.get("pod_ready", False),
                 message=w.get("message")
@@ -379,6 +403,7 @@ def start_named_workstation(user_ns: str, name: str):
         memory = config.get("memory", "2Gi")
         disk_size = config.get("disk_size", "10Gi")
         gpu = config.get("gpu")
+        user_env_vars = config.get("env_vars", {}) if isinstance(config, dict) else {}
         final_image = custom_image if custom_image else settings.workstation_image
 
         # 3. Ensure PVC exists
@@ -395,6 +420,7 @@ def start_named_workstation(user_ns: str, name: str):
             cpu=cpu,
             memory=memory,
             gpu=gpu,
+            env_vars=user_env_vars,
         )
         return {"status": "ok", "message": f"Workstation {name} start initiated", "image": final_image}
     except Exception as e:
@@ -419,13 +445,16 @@ def build_named_workstation(user_ns: str, name: str, req: BuildRequest):
         
         # 2. Save custom image preference in K8s ConfigMap
         get_k8s_manager().save_workstation_config(user_ns, name, image_tag)
-        
+
         # 3. Save the Dockerfile for this image
         get_k8s_manager().save_image_dockerfile(user_ns, name, req.dockerfile)
-        
+
+        # 4. Save build_id so we can track status across page navigations
+        get_k8s_manager().save_image_build_id(user_ns, name, build_id)
+
         return {
-            "status": "ok", 
-            "message": f"Build for {name} triggered", 
+            "status": "ok",
+            "message": f"Build for {name} triggered",
             "image": image_tag,
             "build_id": build_id
         }

@@ -165,7 +165,7 @@ class K8sManager:
                 logger.error(f"Failed to create PVC {name} in {user_ns}: {e}")
 
     def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None,
-                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None):
+                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None, env_vars: dict = None):
         if ports is None:
             ports = [3000]
         self._refresh_config()
@@ -212,10 +212,15 @@ class K8sManager:
 
         # Environment variables for GCP credentials
         from app.core.config import settings
-        env_vars = [
+        env_list = [
             client.V1EnvVar(name="GOOGLE_APPLICATION_CREDENTIALS", value="/var/secrets/google/adc.json"),
             client.V1EnvVar(name="GOOGLE_CLOUD_PROJECT", value=settings.gcp_project_id or ""),
         ]
+
+        # Append user-defined environment variables
+        if env_vars:
+            for k, v in env_vars.items():
+                env_list.append(client.V1EnvVar(name=k, value=v))
 
         sts = client.V1StatefulSet(
             metadata=client.V1ObjectMeta(
@@ -256,7 +261,7 @@ class K8sManager:
                                 name=name,
                                 image=image,
                                 ports=container_ports,
-                                env=env_vars,
+                                env=env_list,
                                 resources=client.V1ResourceRequirements(
                                     requests=resource_requests,
                                     limits=resource_limits if resource_limits else None
@@ -391,6 +396,48 @@ class K8sManager:
         except Exception as e:
             logger.error(f"Failed to save dockerfile for {image_name} in {user_ns}: {e}")
 
+    def save_image_build_id(self, user_ns: str, image_name: str, build_id: str):
+        self._refresh_config()
+        if not self.core_api: return
+        cm_name = "image-builds"
+        try:
+            try:
+                cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+                if not cm.data: cm.data = {}
+                cm.data[image_name] = build_id
+                self.core_api.patch_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+            except Exception:
+                cm = client.V1ConfigMap(
+                    metadata=client.V1ObjectMeta(name=cm_name),
+                    data={image_name: build_id}
+                )
+                self.core_api.create_namespaced_config_map(namespace=user_ns, body=cm)
+        except Exception as e:
+            logger.error(f"Failed to save build_id for {image_name} in {user_ns}: {e}")
+
+    def get_image_build_ids(self, user_ns: str) -> dict:
+        self._refresh_config()
+        if not self.core_api: return {}
+        cm_name = "image-builds"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            return dict(cm.data) if cm.data else {}
+        except Exception:
+            return {}
+
+    def delete_image_build_id(self, user_ns: str, image_name: str):
+        self._refresh_config()
+        if not self.core_api: return
+        cm_name = "image-builds"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
+            if cm.data and image_name in cm.data:
+                del cm.data[image_name]
+                if not cm.data: cm.data = {}
+                self.core_api.replace_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
+        except Exception as e:
+            logger.info(f"Could not delete build_id for {image_name}: {e}")
+
     def delete_image_config(self, user_ns: str, image_name: str):
         self._refresh_config()
         if not self.core_api: return
@@ -405,6 +452,9 @@ class K8sManager:
                 self.core_api.replace_namespaced_config_map(name=cm_name, namespace=user_ns, body=cm)
         except Exception as e:
             logger.info(f"Could not delete {image_name} from image-dockerfiles: {e}")
+
+        # Remove from image-builds
+        self.delete_image_build_id(user_ns, image_name)
     def get_image_dockerfile(self, user_ns: str, image_name: str) -> Optional[str]:
         self._refresh_config()
         if not self.core_api: return None
@@ -456,14 +506,15 @@ class K8sManager:
                 logger.error(f"Failed to delete config for {workstation_name} in {user_ns}: {e}")
 
     def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None,
-                                cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None):
+                                cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None,
+                                env_vars: dict = None):
         if ports is None:
             ports = [3000]
         self._refresh_config()
         if not self.core_api: return
         import json
         cm_name = "workstation-configs"
-        config_data = json.dumps({"image": image, "ports": ports, "cpu": cpu, "memory": memory, "disk_size": disk_size, "gpu": gpu})
+        config_data = json.dumps({"image": image, "ports": ports, "cpu": cpu, "memory": memory, "disk_size": disk_size, "gpu": gpu, "env_vars": env_vars or {}})
         try:
             cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
             if not cm.data: cm.data = {}
