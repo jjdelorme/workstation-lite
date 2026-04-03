@@ -46,6 +46,7 @@ ENV/
 *.swo
 
 # Project Specific
+backend/app/static/
 .playwright-mcp/
 backend/backend.log
 backend/fresh_backend.log

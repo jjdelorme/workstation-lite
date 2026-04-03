@@ -49,6 +49,12 @@ npm run build        # Production build (tsc -b && vite build)
 npm run lint         # ESLint
 ```
 
+**Important:** The backend serves the frontend from `backend/app/static/`, not from `frontend/dist/`. After rebuilding the frontend, copy the output to the backend:
+```bash
+rm -rf backend/app/static && cp -r frontend/dist backend/app/static
+```
+This allows you to update the UI without restarting the backend server — just refresh the browser.
+
 ### Tests
 ```bash
 cd backend && pytest                              # All backend tests
