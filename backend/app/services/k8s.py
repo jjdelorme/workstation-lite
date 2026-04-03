@@ -1,9 +1,12 @@
-from kubernetes import client, config
+from kubernetes import client
+import base64
 import logging
-import os
-import subprocess
-import yaml
+import tempfile
 from typing import Optional
+import google.auth
+import google.auth.transport.requests
+from google.cloud import container_v1
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,94 +17,69 @@ class K8sManager:
         self.apps_api = None
         self._is_ready = False
         self._last_refresh_time = 0
+        self._credentials = None
         self._refresh_config()
+
+    def _get_gcp_credentials(self):
+        """Get and cache GCP credentials via google.auth.default()."""
+        if self._credentials is None:
+            self._credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        self._credentials.refresh(google.auth.transport.requests.Request())
+        return self._credentials
+
+    def _get_gcp_token(self) -> str:
+        """Get a fresh access token via ADC."""
+        return self._get_gcp_credentials().token
 
     def _refresh_config(self):
         import time
         current_time = time.time()
-        
+
         # Refresh if not ready, or if it's been more than 30 minutes (1800 seconds)
         if self._is_ready and (current_time - self._last_refresh_time < 1800):
             return
-            
+
         self._last_refresh_time = current_time
-            
-        # Try in-cluster first
+
+        # Connect to GKE using ADC + GKE API (no kubeconfig/kubectl dependency)
         try:
-            logger.info("Checking in-cluster config...")
-            config.load_incluster_config()
-            self.core_api = client.CoreV1Api()
-            self.apps_api = client.AppsV1Api()
+            logger.info("Connecting to GKE via ADC and GKE API...")
+            project_id = settings.gcp_project_id
+            region = settings.region
+            cluster_name = settings.cluster_name
+
+            if not project_id:
+                logger.error("GCP project ID not configured, cannot connect to GKE")
+                return
+
+            # Use GKE API to get cluster endpoint and CA cert
+            gke_client = container_v1.ClusterManagerClient()
+            cluster_path = f"projects/{project_id}/locations/{region}/clusters/{cluster_name}"
+            cluster = gke_client.get_cluster(request={"name": cluster_path})
+
+            # Build K8s client configuration using ADC token
+            token = self._get_gcp_token()
+
+            configuration = client.Configuration()
+            configuration.host = f"https://{cluster.endpoint}"
+            configuration.api_key['authorization'] = f"Bearer {token}"
+
+            # Set up CA cert
+            ca_cert_file = tempfile.NamedTemporaryFile(delete=False, suffix=".crt")
+            ca_cert_file.write(base64.b64decode(cluster.master_auth.cluster_ca_certificate))
+            ca_cert_file.close()
+            configuration.ssl_ca_cert = ca_cert_file.name
+
+            self.api_client = client.ApiClient(configuration)
+            self.core_api = client.CoreV1Api(self.api_client)
+            self.apps_api = client.AppsV1Api(self.api_client)
             self._is_ready = True
-            logger.info("In-cluster config loaded")
-            return
-        except config.ConfigException:
-            logger.info("In-cluster config not available")
-            pass
-
-        # Manual fallback logic
-        try:
-            kubeconfig_path = os.path.expanduser("~/.kube/config")
-            logger.info(f"Checking kubeconfig at {kubeconfig_path}")
-            if os.path.exists(kubeconfig_path):
-                with open(kubeconfig_path, "r") as f:
-                    conf = yaml.safe_load(f)
-
-                logger.info("Kubeconfig file loaded")
-                # Check if it uses the gke-gcloud-auth-plugin
-                uses_plugin = False
-                for user_entry in conf.get('users', []):
-                    user_data = user_entry.get('user', {})
-                    cmd = user_data.get('exec', {}).get('command')
-                    if cmd == 'gke-gcloud-auth-plugin' or user_data.get('command') == 'gke-gcloud-auth-plugin':
-                        uses_plugin = True
-                        break
-                
-                if uses_plugin:
-                    logger.info("Detected missing gke-gcloud-auth-plugin, using manual token fallback")
-                    # Find current cluster
-                    curr_context_name = conf.get('current-context')
-                    curr_context = next(c for c in conf['contexts'] if c['name'] == curr_context_name)['context']
-                    curr_cluster = next(c for c in conf['clusters'] if c['name'] == curr_context['cluster'])['cluster']
-                    
-                    host = curr_cluster['server']
-                    ca_data = curr_cluster.get('certificate-authority-data')
-                    
-                    token = subprocess.check_output(
-                        ["gcloud", "auth", "application-default", "print-access-token"],
-                        text=True
-                    ).strip()
-
-                    configuration = client.Configuration()
-                    configuration.host = host
-                    if ca_data:
-                        import base64
-                        import tempfile
-                        ca_cert = tempfile.NamedTemporaryFile(delete=False)
-                        ca_cert.write(base64.b64decode(ca_data))
-                        ca_cert.close()
-                        configuration.ssl_ca_cert = ca_cert.name
-                    
-                    configuration.api_key['authorization'] = f"Bearer {token}"
-                    
-                    self.api_client = client.ApiClient(configuration)
-                    self.core_api = client.CoreV1Api(self.api_client)
-                    self.apps_api = client.AppsV1Api(self.api_client)
-                    self._is_ready = True
-                    logger.info("Successfully initialized K8s client with manual fallback")
-                    return
-        except Exception as fallback_e:
-            logger.error(f"Manual K8s fallback detection failed: {fallback_e}")
-
-        # Try standard kubeconfig as last resort
-        try:
-            config.load_kube_config()
-            self.core_api = client.CoreV1Api()
-            self.apps_api = client.AppsV1Api()
-            self._is_ready = True
-            logger.info("Standard kubeconfig loaded")
+            logger.info(f"Connected to GKE cluster {cluster_name} via ADC")
         except Exception as e:
-            logger.error(f"All K8s config methods failed: {e}")
+            logger.error(f"Failed to connect to GKE via ADC: {e}")
+            self._is_ready = False
 
     def ensure_namespace(self, user_ns: str):
         self._refresh_config()
@@ -117,10 +95,7 @@ class K8sManager:
         
         # Always try to ensure the image pull secret exists
         try:
-            token = subprocess.check_output(
-                ["gcloud", "auth", "application-default", "print-access-token"],
-                text=True
-            ).strip()
+            token = self._get_gcp_token()
             import base64
             import json
             auth_config = {
