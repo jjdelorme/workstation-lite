@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from app.models.service import (
     SaveServiceConfigRequest, ServiceResponse, ServiceListResponse,
-    ServiceStatus, SERVICE_CATALOG, SERVICE_CATALOG_BY_TYPE,
+    ServiceStatus,
 )
 from app.core.config import settings
 import logging
@@ -25,7 +25,14 @@ def get_k8s_manager():
 
 @router.get("/catalog")
 def list_service_catalog():
-    return [entry.model_dump() for entry in SERVICE_CATALOG]
+    return get_k8s_manager().get_service_catalog_templates()
+
+
+@router.post("/catalog/reseed")
+def reseed_service_catalog():
+    """Force re-seed the catalog templates ConfigMap from defaults."""
+    get_k8s_manager().seed_service_catalog_templates()
+    return {"status": "ok", "message": "Catalog templates re-seeded"}
 
 
 @router.get("/{user_ns}/list", response_model=ServiceListResponse)
@@ -51,6 +58,8 @@ def list_all_services(user_ns: str):
                 memory=config.get("memory", "512Mi"),
                 disk_size=config.get("disk_size", "5Gi"),
                 env_vars=config.get("env_vars", {}),
+                data_mount_path=config.get("data_mount_path", "/data"),
+                health_check_command=config.get("health_check_command", []),
                 pod_name=s.get("pod_name"),
                 pod_ready=s.get("pod_ready", False),
                 message=s.get("message"),
@@ -65,22 +74,18 @@ def save_service_config_endpoint(user_ns: str, name: str, req: SaveServiceConfig
     try:
         current_config = get_k8s_manager().get_service_config(user_ns, name)
 
-        # Resolve from catalog if service_type is provided and not custom
-        catalog_entry = SERVICE_CATALOG_BY_TYPE.get(req.service_type)
-
-        image = req.image if req.image else (
-            catalog_entry.image if catalog_entry else current_config.get("image")
-        )
-        ports = req.ports if req.ports is not None else (
-            catalog_entry.ports if catalog_entry else current_config.get("ports", [])
-        )
+        image = req.image if req.image else current_config.get("image")
+        ports = req.ports if req.ports is not None else current_config.get("ports", [])
         cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "250m")
         memory = req.memory if req.memory is not None else current_config.get("memory", "512Mi")
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "5Gi")
         env_vars = req.env_vars if req.env_vars is not None else current_config.get("env_vars", {})
+        data_mount_path = req.data_mount_path if req.data_mount_path is not None else current_config.get("data_mount_path", "/data")
+        health_check_command = req.health_check_command if req.health_check_command is not None else current_config.get("health_check_command", [])
 
         get_k8s_manager().save_service_config(
             user_ns, name, image, req.service_type, ports, cpu, memory, disk_size, env_vars,
+            data_mount_path, health_check_command,
         )
         return {"status": "ok", "message": f"Service config for {name} saved"}
     except Exception as e:
@@ -93,22 +98,19 @@ def start_service(user_ns: str, name: str):
     try:
         get_k8s_manager().ensure_namespace(user_ns)
 
+        # Instance config is the source of truth — all fields were set at save-config time
         config = get_k8s_manager().get_service_config(user_ns, name)
         image = config.get("image")
         if not image:
             raise HTTPException(status_code=400, detail="No image configured for this service")
 
-        service_type = config.get("service_type", "custom")
         ports = config.get("ports", [])
         cpu = config.get("cpu", "250m")
         memory = config.get("memory", "512Mi")
         disk_size = config.get("disk_size", "5Gi")
         env_vars = config.get("env_vars", {})
-
-        # Resolve catalog entry for mount path and health check
-        catalog_entry = SERVICE_CATALOG_BY_TYPE.get(service_type)
-        data_mount_path = catalog_entry.data_mount_path if catalog_entry else "/data"
-        health_check_command = catalog_entry.health_check_command if catalog_entry else None
+        data_mount_path = config.get("data_mount_path", "/data")
+        health_check_command = config.get("health_check_command", []) or None
 
         # Ensure PVC
         k8s_name = f"svc-{name}"
@@ -167,6 +169,8 @@ def get_service_status(user_ns: str, name: str):
         image=config.get("image"),
         service_type=config.get("service_type", "custom"),
         ports=config.get("ports", []),
+        data_mount_path=config.get("data_mount_path", "/data"),
+        health_check_command=config.get("health_check_command", []),
         pod_name=res.get("pod_name"),
         pod_ready=res.get("pod_ready", False),
         message=res.get("message"),

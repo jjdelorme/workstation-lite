@@ -14,6 +14,12 @@ This file provides comprehensive guidance for AI agents (Claude, Gemini, etc.) w
     * **Stored as**: A K8s StatefulSet (Compute) + a PVC (Storage).
     * **Lifecycle**: Create from a Template -> Start -> Stop -> Delete.
     * **Storage Logic**: Since each workstation is a unique instance, **deleting** a workstation should destroy both the compute and the storage. This ensures no "dangling disks" are left behind accumulating costs and cluttering the workspace.
+4. **Services**: Non-workstation pods (databases, caches, queues) running alongside workstations in the same namespace, accessible via Kubernetes DNS.
+    * **Catalog Templates**: Stored in a `service-catalog-templates` ConfigMap in the `default` namespace. Seeded from Python defaults on first access, then the ConfigMap is the source of truth.
+    * **Instance Configs**: Stored per-user in a `service-configs` ConfigMap in the user's namespace. All fields (image, ports, env vars, mount path, health check, resources) are user-editable.
+    * **Stored as**: A K8s StatefulSet (`svc-` prefix) + PVC + ClusterIP Service.
+    * **Lifecycle**: Create (save config) -> Start -> Stop -> Delete.
+    * **Connectivity**: ClusterIP services provide in-cluster DNS (`svc-<name>:<port>`). Connect/exec scripts generate `kubectl port-forward` and `kubectl exec` commands for local access.
 
 ## Architecture
 - **Monolith Deployment:** The FastAPI backend serves the React SPA from its `static` directory. Frontend assets are built and copied there via Dockerfile multi-stage build.
@@ -22,7 +28,7 @@ This file provides comprehensive guidance for AI agents (Claude, Gemini, etc.) w
 
 ### Project Structure
 - `backend/app/main.py`: FastAPI app entry point, mounts routers and SPA middleware.
-- `backend/app/api/`: REST API endpoints (`health.py`, `admin.py`, `workstations.py`).
+- `backend/app/api/`: REST API endpoints (`health.py`, `admin.py`, `workstations.py`, `services.py`).
 - `backend/app/services/`: Integration logic for GCP services (GKE, Cloud Build, Artifact Registry, etc.).
 - `backend/app/models/`: Pydantic models for request/response validation.
 - `backend/app/core/config.py`: App configuration via pydantic-settings.

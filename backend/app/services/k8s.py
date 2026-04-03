@@ -825,7 +825,8 @@ class K8sManager:
 
     def save_service_config(self, user_ns: str, service_name: str, image: str, service_type: str = "custom",
                             ports: list[int] = None, cpu: str = "250m", memory: str = "512Mi",
-                            disk_size: str = "5Gi", env_vars: dict = None):
+                            disk_size: str = "5Gi", env_vars: dict = None,
+                            data_mount_path: str = "/data", health_check_command: list[str] = None):
         if ports is None:
             ports = []
         self._refresh_config()
@@ -837,6 +838,8 @@ class K8sManager:
             "image": image, "service_type": service_type, "ports": ports,
             "cpu": cpu, "memory": memory, "disk_size": disk_size,
             "env_vars": env_vars or {},
+            "data_mount_path": data_mount_path,
+            "health_check_command": health_check_command or [],
         })
         try:
             cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
@@ -859,6 +862,7 @@ class K8sManager:
         default_config = {
             "image": None, "service_type": "custom", "ports": [],
             "cpu": "250m", "memory": "512Mi", "disk_size": "5Gi", "env_vars": {},
+            "data_mount_path": "/data", "health_check_command": [],
         }
         if not self.core_api:
             return default_config
@@ -878,6 +882,8 @@ class K8sManager:
                 "memory": parsed.get("memory", "512Mi"),
                 "disk_size": parsed.get("disk_size", "5Gi"),
                 "env_vars": parsed.get("env_vars", {}),
+                "data_mount_path": parsed.get("data_mount_path", "/data"),
+                "health_check_command": parsed.get("health_check_command", []),
             }
         except Exception:
             return default_config
@@ -934,6 +940,67 @@ class K8sManager:
 
         # 4. Remove config
         self.delete_service_config(user_ns, name)
+
+    # ── Service catalog template operations ────────────────────────────────
+
+    def get_service_catalog_templates(self) -> list[dict]:
+        """Read service catalog templates from ConfigMap. Seeds defaults if missing."""
+        self._refresh_config()
+        if not self.core_api:
+            # Fallback to hardcoded defaults if k8s not available
+            from app.models.service import DEFAULT_SERVICE_CATALOG
+            return [entry.model_dump() for entry in DEFAULT_SERVICE_CATALOG]
+        import json
+        cm_name = "service-catalog-templates"
+        try:
+            cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace="default")
+            if not cm.data:
+                return []
+            templates = []
+            for val in cm.data.values():
+                templates.append(json.loads(val))
+            return templates
+        except Exception as e:
+            if hasattr(e, 'status') and e.status == 404:
+                self.seed_service_catalog_templates()
+                # Retry after seeding
+                try:
+                    cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace="default")
+                    if not cm.data:
+                        return []
+                    return [json.loads(val) for val in cm.data.values()]
+                except Exception:
+                    pass
+            logger.error(f"Error reading service catalog templates: {e}")
+            from app.models.service import DEFAULT_SERVICE_CATALOG
+            return [entry.model_dump() for entry in DEFAULT_SERVICE_CATALOG]
+
+    def seed_service_catalog_templates(self):
+        """Create or update the service catalog ConfigMap with default templates."""
+        self._refresh_config()
+        if not self.core_api:
+            return
+        import json
+        from app.models.service import DEFAULT_SERVICE_CATALOG
+        cm_name = "service-catalog-templates"
+        data = {}
+        for entry in DEFAULT_SERVICE_CATALOG:
+            data[entry.service_type] = json.dumps(entry.model_dump())
+        cm = client.V1ConfigMap(
+            metadata=client.V1ObjectMeta(name=cm_name),
+            data=data,
+        )
+        try:
+            self.core_api.read_namespaced_config_map(name=cm_name, namespace="default")
+            # Already exists — replace it
+            self.core_api.replace_namespaced_config_map(name=cm_name, namespace="default", body=cm)
+            logger.info("Updated service catalog templates ConfigMap")
+        except Exception:
+            try:
+                self.core_api.create_namespaced_config_map(namespace="default", body=cm)
+                logger.info("Seeded service catalog templates ConfigMap")
+            except Exception as e:
+                logger.error(f"Failed to seed service catalog templates: {e}")
 
     def scale_service(self, user_ns: str, name: str, replicas: int):
         k8s_name = f"svc-{name}"

@@ -48,6 +48,8 @@ interface ServiceStatusInfo {
   memory?: string;
   disk_size?: string;
   env_vars?: Record<string, string>;
+  data_mount_path?: string;
+  health_check_command?: string[];
   pod_name?: string;
   pod_ready: boolean;
   message?: string;
@@ -381,13 +383,13 @@ function App() {
 
   // ── Service handlers ──────────────────────────────────────────────────
 
-  const handleCreateService = async (name: string, serviceType: string, image: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>) => {
+  const handleCreateService = async (name: string, serviceType: string, image: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>, dataMountPath: string = '/data', healthCheckCommand: string[] = []) => {
     setNotification({ type: 'info', msg: `Creating service ${name}...` });
     try {
       const saveResponse = await fetch(`/api/services/${user_ns}/save-config/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, service_type: serviceType, ports, cpu, memory, disk_size: diskSize, env_vars: envVars }),
+        body: JSON.stringify({ image, service_type: serviceType, ports, cpu, memory, disk_size: diskSize, env_vars: envVars, data_mount_path: dataMountPath, health_check_command: healthCheckCommand }),
       });
       if (saveResponse.ok) {
         const startResponse = await fetch(`/api/services/${user_ns}/start/${name}`, { method: 'POST' });
@@ -424,7 +426,7 @@ function App() {
     }
   };
 
-  const handleUpdateService = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>) => {
+  const handleUpdateService = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>, dataMountPath: string = '/data', healthCheckCommand: string[] = []) => {
     setNotification({ type: 'info', msg: `Updating service ${name}...` });
     try {
       // Get existing config to preserve service_type and image
@@ -436,6 +438,7 @@ function App() {
           image: existingSvc?.image,
           service_type: existingSvc?.service_type || 'custom',
           ports, cpu, memory, disk_size: diskSize, env_vars: envVars,
+          data_mount_path: dataMountPath, health_check_command: healthCheckCommand,
         }),
       });
       if (response.ok) {
@@ -889,6 +892,8 @@ function App() {
                                   memory: svc.memory || '512Mi',
                                   disk_size: svc.disk_size || '5Gi',
                                   env_vars: svc.env_vars || {},
+                                  data_mount_path: svc.data_mount_path || '/data',
+                                  health_check_command: svc.health_check_command || [],
                                 });
                                 setIsEditServiceDialogOpen(true);
                               }}

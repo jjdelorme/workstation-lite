@@ -18,9 +18,11 @@ class ServiceCatalogEntry(BaseModel):
     ports: list[int]
     data_mount_path: str
     health_check_command: list[str]
+    required_env_vars: dict[str, str] = {}
 
 
-SERVICE_CATALOG: list[ServiceCatalogEntry] = [
+# Seed data — written to ConfigMap on first access, then ConfigMap is source of truth
+DEFAULT_SERVICE_CATALOG: list[ServiceCatalogEntry] = [
     ServiceCatalogEntry(
         service_type="postgresql",
         label="PostgreSQL 16",
@@ -28,6 +30,7 @@ SERVICE_CATALOG: list[ServiceCatalogEntry] = [
         ports=[5432],
         data_mount_path="/var/lib/postgresql/data",
         health_check_command=["pg_isready"],
+        required_env_vars={"PGDATA": "/var/lib/postgresql/data/pgdata", "POSTGRES_PASSWORD": "changeme"},
     ),
     ServiceCatalogEntry(
         service_type="redis",
@@ -44,6 +47,7 @@ SERVICE_CATALOG: list[ServiceCatalogEntry] = [
         ports=[3306],
         data_mount_path="/var/lib/mysql",
         health_check_command=["mysqladmin", "ping"],
+        required_env_vars={"MYSQL_ROOT_PASSWORD": "changeme"},
     ),
     ServiceCatalogEntry(
         service_type="mongodb",
@@ -63,8 +67,6 @@ SERVICE_CATALOG: list[ServiceCatalogEntry] = [
     ),
 ]
 
-SERVICE_CATALOG_BY_TYPE = {entry.service_type: entry for entry in SERVICE_CATALOG}
-
 
 class SaveServiceConfigRequest(BaseModel):
     image: Optional[str] = None
@@ -74,6 +76,8 @@ class SaveServiceConfigRequest(BaseModel):
     memory: Optional[str] = "512Mi"
     disk_size: Optional[str] = "5Gi"
     env_vars: Optional[dict[str, str]] = None
+    data_mount_path: Optional[str] = None
+    health_check_command: Optional[list[str]] = None
 
 
 class ServiceResponse(BaseModel):
@@ -87,6 +91,8 @@ class ServiceResponse(BaseModel):
     memory: str = "512Mi"
     disk_size: str = "5Gi"
     env_vars: dict[str, str] = {}
+    data_mount_path: str = "/data"
+    health_check_command: list[str] = []
     pod_name: Optional[str] = None
     pod_ready: bool = False
     message: Optional[str] = None

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography, Divider, IconButton } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography, Divider, IconButton, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 export interface ServiceConfig {
   name: string;
@@ -12,12 +13,14 @@ export interface ServiceConfig {
   memory: string;
   disk_size: string;
   env_vars: Record<string, string>;
+  data_mount_path: string;
+  health_check_command: string[];
 }
 
 interface EditServiceDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>) => void;
+  onConfirm: (name: string, ports: number[], cpu: string, memory: string, diskSize: string, envVars: Record<string, string>, dataMountPath: string, healthCheckCommand: string[]) => void;
   service: ServiceConfig | null;
 }
 
@@ -26,6 +29,8 @@ const EditServiceDialog: React.FC<EditServiceDialogProps> = ({ open, onClose, on
   const [cpu, setCpu] = useState('250m');
   const [memory, setMemory] = useState('512Mi');
   const [diskSize, setDiskSize] = useState('5Gi');
+  const [dataMountPath, setDataMountPath] = useState('/data');
+  const [healthCheckCmd, setHealthCheckCmd] = useState('');
   const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>([]);
 
   useEffect(() => {
@@ -34,6 +39,8 @@ const EditServiceDialog: React.FC<EditServiceDialogProps> = ({ open, onClose, on
       setCpu(service.cpu || '250m');
       setMemory(service.memory || '512Mi');
       setDiskSize(service.disk_size || '5Gi');
+      setDataMountPath(service.data_mount_path || '/data');
+      setHealthCheckCmd(service.health_check_command?.join(' ') || '');
       const ev = service.env_vars || {};
       setEnvEntries(Object.entries(ev).map(([key, value]) => ({ key, value })));
     }
@@ -44,7 +51,8 @@ const EditServiceDialog: React.FC<EditServiceDialogProps> = ({ open, onClose, on
     const ports = portsStr.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
     const envVars: Record<string, string> = {};
     envEntries.forEach(e => { if (e.key.trim()) envVars[e.key.trim()] = e.value; });
-    onConfirm(service.name, ports, cpu, memory, diskSize, envVars);
+    const healthCheck = healthCheckCmd.trim() ? healthCheckCmd.trim().split(/\s+/) : [];
+    onConfirm(service.name, ports, cpu, memory, diskSize, envVars, dataMountPath, healthCheck);
     onClose();
   };
 
@@ -92,6 +100,30 @@ const EditServiceDialog: React.FC<EditServiceDialogProps> = ({ open, onClose, on
           {envEntries.length === 0 && (
             <Typography variant="caption" color="text.secondary">No environment variables. Click + to add.</Typography>
           )}
+
+          <Accordion disableGutters elevation={0} sx={{ '&:before': { display: 'none' }, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography variant="subtitle2" color="text.secondary">Advanced Settings</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  label="Data Mount Path"
+                  fullWidth
+                  value={dataMountPath}
+                  onChange={(e) => setDataMountPath(e.target.value)}
+                  helperText="Where the persistent volume is mounted inside the container"
+                />
+                <TextField
+                  label="Health Check Command"
+                  fullWidth
+                  value={healthCheckCmd}
+                  onChange={(e) => setHealthCheckCmd(e.target.value)}
+                  helperText="Readiness probe command (space-separated)"
+                />
+              </Box>
+            </AccordionDetails>
+          </Accordion>
 
           <Typography variant="body2" color="text.secondary">
             Changes will apply the next time you <b>Start</b> this service.

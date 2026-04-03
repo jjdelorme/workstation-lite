@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from app.services.k8s import K8sManager
 from app.main import app
-from app.models.service import SERVICE_CATALOG, SERVICE_CATALOG_BY_TYPE, ServiceStatus
+from app.models.service import DEFAULT_SERVICE_CATALOG, ServiceStatus
 
 client = TestClient(app)
 
@@ -12,8 +12,8 @@ client = TestClient(app)
 # ── Model tests ──────────────────────────────────────────────────────────
 
 def test_service_catalog_has_entries():
-    assert len(SERVICE_CATALOG) >= 5
-    types = [e.service_type for e in SERVICE_CATALOG]
+    assert len(DEFAULT_SERVICE_CATALOG) >= 5
+    types = [e.service_type for e in DEFAULT_SERVICE_CATALOG]
     assert "postgresql" in types
     assert "redis" in types
     assert "mysql" in types
@@ -21,10 +21,11 @@ def test_service_catalog_has_entries():
     assert "rabbitmq" in types
 
 
-def test_service_catalog_by_type_lookup():
-    pg = SERVICE_CATALOG_BY_TYPE["postgresql"]
+def test_service_catalog_postgresql_has_required_env():
+    pg = next(e for e in DEFAULT_SERVICE_CATALOG if e.service_type == "postgresql")
     assert pg.image == "postgres:16"
     assert 5432 in pg.ports
+    assert "PGDATA" in pg.required_env_vars
 
 
 def test_service_status_enum():
@@ -100,7 +101,11 @@ def test_save_service_config(mock_k8s_client):
 
     mock_core.read_namespaced_config_map.side_effect = Exception("Not Found")
 
-    manager.save_service_config("user-1", "my-postgres", "postgres:16", "postgresql", [5432])
+    manager.save_service_config(
+        "user-1", "my-postgres", "postgres:16", "postgresql", [5432],
+        data_mount_path="/var/lib/postgresql/data",
+        health_check_command=["pg_isready"],
+    )
 
     assert mock_core.create_namespaced_config_map.called
     args, kwargs = mock_core.create_namespaced_config_map.call_args
@@ -108,6 +113,8 @@ def test_save_service_config(mock_k8s_client):
     assert parsed['image'] == "postgres:16"
     assert parsed['service_type'] == "postgresql"
     assert parsed['ports'] == [5432]
+    assert parsed['data_mount_path'] == "/var/lib/postgresql/data"
+    assert parsed['health_check_command'] == ["pg_isready"]
 
 
 def test_get_service_config(mock_k8s_client):
@@ -119,6 +126,8 @@ def test_get_service_config(mock_k8s_client):
         "image": "postgres:16", "service_type": "postgresql",
         "ports": [5432], "cpu": "250m", "memory": "512Mi",
         "disk_size": "5Gi", "env_vars": {"POSTGRES_PASSWORD": "secret"},
+        "data_mount_path": "/var/lib/postgresql/data",
+        "health_check_command": ["pg_isready"],
     })}
     mock_core.read_namespaced_config_map.return_value = mock_cm
 
@@ -126,6 +135,8 @@ def test_get_service_config(mock_k8s_client):
     assert config["image"] == "postgres:16"
     assert config["service_type"] == "postgresql"
     assert config["env_vars"]["POSTGRES_PASSWORD"] == "secret"
+    assert config["data_mount_path"] == "/var/lib/postgresql/data"
+    assert config["health_check_command"] == ["pg_isready"]
 
 
 def test_get_service_config_default(mock_k8s_client):
@@ -137,6 +148,8 @@ def test_get_service_config_default(mock_k8s_client):
     config = manager.get_service_config("user-1", "nonexistent")
     assert config["image"] is None
     assert config["cpu"] == "250m"
+    assert config["data_mount_path"] == "/data"
+    assert config["health_check_command"] == []
 
 
 def test_delete_service(mock_k8s_client):
@@ -170,12 +183,10 @@ def test_list_services(mock_k8s_client):
     mock_list.items = [mock_sts]
     mock_apps.list_namespaced_stateful_set.return_value = mock_list
 
-    # Mock pod status for get_service_status
     mock_pod = MagicMock()
     mock_pod.status.container_statuses = [MagicMock(state=MagicMock(waiting=None, terminated=None))]
     mock_core.read_namespaced_pod.return_value = mock_pod
 
-    # Mock the STS read for get_service_status
     mock_sts_read = MagicMock()
     mock_sts_read.status.ready_replicas = 1
     mock_sts_read.spec.replicas = 1
@@ -187,15 +198,84 @@ def test_list_services(mock_k8s_client):
     assert services[0]["status"] == "RUNNING"
 
 
+def test_seed_service_catalog_templates(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    manager.seed_service_catalog_templates()
+
+    assert mock_core.create_namespaced_config_map.called
+    args, kwargs = mock_core.create_namespaced_config_map.call_args
+    assert kwargs['namespace'] == "default"
+    cm = kwargs['body']
+    assert "postgresql" in cm.data
+    parsed = json.loads(cm.data["postgresql"])
+    assert parsed["image"] == "postgres:16"
+    assert parsed["required_env_vars"]["PGDATA"] == "/var/lib/postgresql/data/pgdata"
+
+
+def test_get_service_catalog_templates_from_configmap(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    mock_cm = MagicMock()
+    mock_cm.data = {
+        "postgresql": json.dumps({
+            "service_type": "postgresql", "label": "PostgreSQL 16",
+            "image": "postgres:16", "ports": [5432],
+            "data_mount_path": "/var/lib/postgresql/data",
+            "health_check_command": ["pg_isready"],
+            "required_env_vars": {"PGDATA": "/var/lib/postgresql/data/pgdata"},
+        }),
+    }
+    mock_core.read_namespaced_config_map.return_value = mock_cm
+
+    templates = manager.get_service_catalog_templates()
+    assert len(templates) == 1
+    assert templates[0]["service_type"] == "postgresql"
+    assert templates[0]["image"] == "postgres:16"
+
+
+def test_get_service_catalog_templates_seeds_on_404(mock_k8s_client):
+    mock_core, _ = mock_k8s_client
+    manager = K8sManager()
+
+    # First call raises 404 exception, triggering seed, second call returns data
+    not_found_exc = type('ApiException', (Exception,), {'status': 404})()
+    mock_cm = MagicMock()
+    mock_cm.data = {
+        "redis": json.dumps({
+            "service_type": "redis", "label": "Redis 7",
+            "image": "redis:7", "ports": [6379],
+            "data_mount_path": "/data",
+            "health_check_command": ["redis-cli", "ping"],
+            "required_env_vars": {},
+        }),
+    }
+    mock_core.read_namespaced_config_map.side_effect = [not_found_exc, mock_cm]
+
+    templates = manager.get_service_catalog_templates()
+    assert mock_core.create_namespaced_config_map.called  # seed was called
+    assert len(templates) == 1
+
+
 # ── API tests ────────────────────────────────────────────────────────────
 
-def test_catalog_endpoint():
+@patch("app.api.services.get_k8s_manager")
+def test_catalog_endpoint(mock_get_k8s):
+    mock_k8s = MagicMock()
+    mock_get_k8s.return_value = mock_k8s
+    mock_k8s.get_service_catalog_templates.return_value = [
+        {"service_type": "postgresql", "label": "PostgreSQL 16", "image": "postgres:16",
+         "ports": [5432], "data_mount_path": "/var/lib/postgresql/data",
+         "health_check_command": ["pg_isready"], "required_env_vars": {}},
+    ]
+
     response = client.get("/api/services/catalog")
     assert response.status_code == 200
     data = response.json()
-    assert len(data) >= 5
-    types = [e["service_type"] for e in data]
-    assert "postgresql" in types
+    assert len(data) == 1
+    assert data[0]["service_type"] == "postgresql"
 
 
 @patch("app.api.services.get_k8s_manager")
@@ -218,17 +298,22 @@ def test_save_service_config_api(mock_get_k8s):
     mock_k8s.get_service_config.return_value = {
         "image": None, "service_type": "custom", "ports": [],
         "cpu": "250m", "memory": "512Mi", "disk_size": "5Gi", "env_vars": {},
+        "data_mount_path": "/data", "health_check_command": [],
     }
 
     response = client.post("/api/services/user-1/save-config/my-pg", json={
         "service_type": "postgresql",
-        "env_vars": {"POSTGRES_PASSWORD": "secret"},
+        "image": "postgres:16",
+        "ports": [5432],
+        "env_vars": {"POSTGRES_PASSWORD": "secret", "PGDATA": "/var/lib/postgresql/data/pgdata"},
+        "data_mount_path": "/var/lib/postgresql/data",
+        "health_check_command": ["pg_isready"],
     })
     assert response.status_code == 200
     assert mock_k8s.save_service_config.called
     call_args = mock_k8s.save_service_config.call_args
-    assert call_args[0][1] == "my-pg"  # service name
-    assert call_args[0][2] == "postgres:16"  # resolved from catalog
+    assert call_args[0][1] == "my-pg"
+    assert call_args[0][2] == "postgres:16"
 
 
 @patch("app.api.services.get_k8s_manager")
@@ -264,6 +349,8 @@ def test_connect_script_api(mock_settings, mock_get_k8s):
         "image": "postgres:16", "service_type": "postgresql",
         "ports": [5432], "cpu": "250m", "memory": "512Mi",
         "disk_size": "5Gi", "env_vars": {},
+        "data_mount_path": "/var/lib/postgresql/data",
+        "health_check_command": ["pg_isready"],
     }
 
     response = client.get("/api/services/user-1/connect/my-pg")
