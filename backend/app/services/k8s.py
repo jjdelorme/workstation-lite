@@ -335,6 +335,10 @@ class K8sManager:
             )
             workstations = []
             for sts in stss.items:
+                # Skip service pods — they show on the Services tab
+                labels = sts.metadata.labels or {}
+                if labels.get("resource-type") == "service":
+                    continue
                 name = sts.metadata.name
                 status_info = self.get_workstation_status(user_ns, name)
                 status_info["name"] = name
