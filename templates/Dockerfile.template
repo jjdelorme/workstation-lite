@@ -1,0 +1,101 @@
+FROM linuxserver/vscodium-web:latest                                                                                                                                                                                        
+                                                                                                               
+# 1. Install system dependencies (as root)
+# Added openssh-server so we can configure sshd_config
+RUN apt-get update && apt-get install -y \                                                                  
+    curl git wget zsh vim tmux jq build-essential \
+    python3 python3-pip golang-go fontconfig sudo locales openssh-server \
+    && rm -rf /var/lib/apt/lists/*                                                                                                                                                                                          
+                                                                                                                                                                                                                               
+# Generate and set locales (Essential for Powerlevel10k, Zsh encoding, and Tmux)
+RUN locale-gen en_US.UTF-8                                                                                                                                                                                                  
+ENV LANG=en_US.UTF-8                                                                                                                                                                                                        
+ENV LC_ALL=en_US.UTF-8                                                                                                                                                                                                      
+                                                                                                                                                                                                                               
+# 2. Install Fonts
+RUN mkdir -p /usr/share/fonts/truetype/meslo && \
+    wget -q -P /usr/share/fonts/truetype/meslo https://github.com/romkatv/dotfiles-public/raw/master/.local/share/fonts/NerdFonts/MesloLGS%20NF%20Regular.ttf && \
+    fc-cache -fv
+
+# 3. Install gcloud SDK (Global location)
+RUN mkdir -p /opt/google-cloud-sdk && \
+    curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz && \
+    tar -xf google-cloud-cli-linux-x86_64.tar.gz -C /opt && \
+    rm google-cloud-cli-linux-x86_64.tar.gz && \
+    /opt/google-cloud-sdk/install.sh --quiet
+
+ENV PATH=$PATH:/opt/google-cloud-sdk/bin:$HOME/.local/bin
+ENV GOOGLE_CLOUD_LOCATION=global
+ENV GOOGLE_CLOUD_PROJECT="" 
+ENV CLAUDE_CODE_USE_VERTEX=1
+
+# 4. Global Tool Locations
+ENV NVM_DIR=/opt/nvm
+ENV OH_MY_ZSH=/opt/oh-my-zsh
+ENV ZSH_CUSTOM=/opt/oh-my-zsh-custom
+ENV ZSH_DISABLE_COMPFIX=true
+
+# 5. Install NVM, Node, npm, Gemini CLI, Oh My Zsh, and P10k into /opt
+RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
+    bash -c "source $NVM_DIR/nvm.sh && \
+             nvm install 20 && \
+             nvm alias default 20 && \
+             npm install -g @google/gemini-cli" && \
+    git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
+
+# 6. Install Claude Code
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# 7. Download a lean default Powerlevel10k config
+# This prevents the prompt from hanging headless while waiting for the config wizard!
+RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
+
+# 8. Create Global ZSH and Tmux Configurations (PVC Proof)
+# Writing to /etc/zsh/zshrc ensures OMZ/P10K run even if a PVC overwrites /home/workspace
+RUN mkdir -p /etc/zsh && \
+    echo 'export LANG=en_US.UTF-8' >> /etc/zsh/zshrc && \
+    echo 'export LC_ALL=en_US.UTF-8' >> /etc/zsh/zshrc && \
+    echo '[[ -z "$TMUX" ]] && export TERM=xterm-256color' >> /etc/zsh/zshrc && \
+    echo 'export ZSH="/opt/oh-my-zsh"' >> /etc/zsh/zshrc && \
+    echo 'export ZSH_CUSTOM="/opt/oh-my-zsh-custom"' >> /etc/zsh/zshrc && \
+    echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
+    echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> /etc/zsh/zshrc && \
+    echo 'source $ZSH/oh-my-zsh.sh' >> /etc/zsh/zshrc && \
+    echo 'export NVM_DIR="/opt/nvm"' >> /etc/zsh/zshrc && \
+    echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /etc/zsh/zshrc && \
+    echo 'export GOOGLE_CLOUD_LOCATION=global' >> /etc/zsh/zshrc && \
+    echo 'export CLAUDE_CODE_USE_VERTEX=1' >> /etc/zsh/zshrc && \
+    echo '[[ ! -f ~/.p10k.zsh ]] && cp /etc/skel/.p10k.zsh ~/.p10k.zsh' >> /etc/zsh/zshrc && \
+    echo 'source ~/.p10k.zsh' >> /etc/zsh/zshrc
+
+# Global Tmux Config
+RUN echo 'set -g default-terminal "screen-256color"' > /etc/tmux.conf && \
+    echo 'set -g default-shell /bin/zsh' >> /etc/tmux.conf
+
+# 9. Configure SSHD to Accept Env 
+RUN mkdir -p /run/sshd /etc/ssh && \
+    echo "AcceptEnv LANG LC_*" >> /etc/ssh/sshd_config || true
+
+# 10. Finalize User Setup
+RUN usermod -d /home/workspace -m abc && \
+    usermod --shell /bin/zsh abc && \
+    usermod --shell /bin/zsh root && \
+    chown -R abc:abc /opt/nvm /opt/oh-my-zsh /opt/oh-my-zsh-custom
+
+# 11. Runtime Initialization Script
+# Ensures home dir and dotfiles are owned by abc when a PVC overmounts /home/workspace
+RUN mkdir -p /etc/cont-init.d && \
+    printf "#!/with-contenv bash\n\
+chown abc:abc /home/workspace\n\
+mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc\n\
+chown -R abc:abc /home/workspace/.cache\n\
+touch /home/workspace/.zsh_history\n\
+chown abc:abc /home/workspace/.zsh_history\n" > /etc/cont-init.d/99-setup-user && \
+    chmod +x /etc/cont-init.d/99-setup-user
+
+# Crucial: Must be root for S6 init to start. 
+USER root
+ENV HOME=/home/workspace
+WORKDIR /home/workspace

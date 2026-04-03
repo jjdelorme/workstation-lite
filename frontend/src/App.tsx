@@ -244,13 +244,15 @@ function App() {
     }
   };
 
-  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string> = {}) => {
+  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string> = {}, image?: string) => {
     setNotification({ type: 'info', msg: `Updating configuration for ${name}...` });
     try {
+      const body: Record<string, unknown> = { ports, cpu, memory, disk_size: diskSize, gpu, env_vars: envVars };
+      if (image) body.image = image;
       const response = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ports, cpu, memory, disk_size: diskSize, gpu, env_vars: envVars }),
+        body: JSON.stringify(body),
       });
 
       if (response.ok) {
@@ -530,6 +532,7 @@ function App() {
                             onClick={() => {
                               setEditingWorkstation({
                                 name: ws.name,
+                                image: ws.image,
                                 ports: ws.ports || [],
                                 cpu: ws.cpu || '500m',
                                 memory: ws.memory || '2Gi',
@@ -815,6 +818,7 @@ function App() {
         }}
         onConfirm={handleUpdateWorkstation}
         workstation={editingWorkstation}
+        availableImages={availableImages}
       />
 
       {notification && (

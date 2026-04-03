@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography, Divider, FormControlLabel, Checkbox, IconButton } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, Typography, Divider, FormControlLabel, Checkbox, IconButton, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import type { ImageMetadata } from './NewWorkstationDialog';
 
 export interface WorkstationConfig {
   name: string;
+  image?: string;
   ports: number[];
   cpu: string;
   memory: string;
@@ -16,11 +18,13 @@ export interface WorkstationConfig {
 interface EditWorkstationDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>) => void;
+  onConfirm: (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>, image?: string) => void;
   workstation: WorkstationConfig | null;
+  availableImages: ImageMetadata[];
 }
 
-const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onClose, onConfirm, workstation }) => {
+const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onClose, onConfirm, workstation, availableImages }) => {
+  const [selectedImage, setSelectedImage] = useState('');
   const [portsStr, setPortsStr] = useState('');
   const [cpu, setCpu] = useState('500m');
   const [memory, setMemory] = useState('2Gi');
@@ -30,6 +34,7 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
 
   useEffect(() => {
     if (workstation) {
+      setSelectedImage(workstation.image || '');
       setPortsStr(workstation.ports?.join(', ') || '3000');
       setCpu(workstation.cpu || '500m');
       setMemory(workstation.memory || '2Gi');
@@ -45,6 +50,7 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
       const ports = portsStr.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
       const envVars: Record<string, string> = {};
       envEntries.forEach(e => { if (e.key.trim()) envVars[e.key.trim()] = e.value; });
+      const imageChanged = selectedImage && selectedImage !== workstation.image;
       onConfirm(
         workstation.name,
         ports.length > 0 ? ports : [3000],
@@ -52,7 +58,8 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
         memory,
         diskSize,
         gpuEnabled ? 'nvidia-l4' : null,
-        envVars
+        envVars,
+        imageChanged ? selectedImage : undefined
       );
       onClose();
     }
@@ -65,6 +72,47 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
         <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Typography variant="subtitle2">Workstation: {workstation?.name}</Typography>
 
+          <FormControl fullWidth>
+            <InputLabel>Image Template</InputLabel>
+            <Select
+              value={selectedImage}
+              label="Image Template"
+              onChange={(e) => setSelectedImage(e.target.value)}
+            >
+              {workstation?.image && (
+                <MenuItem value={workstation.image}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                    <Typography variant="body2">
+                      Current: {workstation.image.split('/').pop()?.split('@')[0]}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              )}
+              {availableImages.filter(img => img.uri && img.uri !== workstation?.image).map((img) => (
+                <MenuItem key={img.tags?.[0] || img.uri} value={img.uri}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                    <Typography variant="body2">
+                      {img.tags && img.tags.length > 0 ? img.tags[0] : img.uri.split('/').pop()}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {img.uri.split('/').pop()?.split('@')[0]}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+              <Divider />
+              <MenuItem value="gitpod/openvscode-server:latest">
+                <em>Default: OpenVSCode Server (Latest)</em>
+              </MenuItem>
+            </Select>
+          </FormControl>
+          {selectedImage && workstation?.image && selectedImage !== workstation.image && (
+            <Typography variant="caption" color="warning.main">
+              Changing the image template will use a new container image while preserving your /home/workspace data.
+            </Typography>
+          )}
+
+          <Divider />
           <Typography variant="subtitle2" color="text.secondary">Resources</Typography>
           <Box sx={{ display: 'flex', gap: 2 }}>
             <TextField
