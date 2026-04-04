@@ -50,11 +50,12 @@ uvicorn app.main:app --reload --port 8080
 ```bash
 cd frontend
 npm install
-npm run lint         # Run linter
-npm run build        # Production build (tsc -b && vite build) -> outputs to backend/app/static/
+npm run dev          # Dev server with HMR (proxies /api to localhost:8080)
+npm run build        # Production build (tsc -b && vite build)
+npm run lint         # ESLint
 ```
 
-**Note:** The frontend is configured to build directly into `backend/app/static/`. The FastAPI backend serves these files automatically. After building the frontend, you can simply refresh the browser while the backend is running to see the changes.
+**Important:** The backend serves the frontend from `backend/app/static/`. The frontend is configured to build directly into this directory (using `vite.config.ts`). To update the UI, simply run `npm run build` in the frontend directory. This will automatically empty `backend/app/static` and populate it with the new build assets. No manual copying is required. After building, you can simply refresh the browser while the backend is running to see the changes.
 
 ### Tests
 ```bash
