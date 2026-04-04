@@ -56,6 +56,7 @@ RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/pow
 # 8. Create Global ZSH and Tmux Configurations (PVC Proof)
 RUN mkdir -p /etc/zsh && \
     echo 'unsetopt WARN_CREATE_GLOBAL' > /etc/zsh/zshrc && \
+    echo '[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh' >> /etc/zsh/zshrc && \
     echo 'export LANG=en_US.UTF-8' >> /etc/zsh/zshrc && \
     echo 'export LC_ALL=en_US.UTF-8' >> /etc/zsh/zshrc && \
     echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
@@ -69,12 +70,14 @@ RUN mkdir -p /etc/zsh && \
     echo 'source $ZSH/oh-my-zsh.sh' >> /etc/zsh/zshrc && \
     echo 'export NVM_DIR="/opt/nvm"' >> /etc/zsh/zshrc && \
     echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /etc/zsh/zshrc && \
-    echo 'export CLAUDE_CODE_USE_VERTEX=1' >> /etc/zsh/zshrc && \
-    echo '[[ ! -f ~/.p10k.zsh ]] && cp /etc/skel/.p10k.zsh ~/.p10k.zsh' >> /etc/zsh/zshrc && \
-    echo 'source ~/.p10k.zsh' >> /etc/zsh/zshrc
+    echo 'export CLAUDE_CODE_USE_VERTEX=1' >> /etc/zsh/zshrc
 
 # Global Tmux Config
-RUN echo 'set -g default-terminal "screen-256color"' > /etc/tmux.conf && \
+RUN echo 'set -g prefix C-a' > /etc/tmux.conf && \
+    echo 'unbind C-b' >> /etc/tmux.conf && \
+    echo 'bind C-a send-prefix' >> /etc/tmux.conf && \
+    echo 'set -g default-terminal "tmux-256color"' >> /etc/tmux.conf && \
+    echo 'set -ga terminal-overrides ",*256col*:Tc"' >> /etc/tmux.conf && \
     echo 'set -g default-shell /bin/zsh' >> /etc/tmux.conf
 
 # 9. Configure SSHD to Accept Env and Force abc User
@@ -97,11 +100,12 @@ RUN mkdir -p /custom-cont-init.d && \
     echo 'chown abc:abc /home/workspace' >> /custom-cont-init.d/99-setup-user && \
     echo 'mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc' >> /custom-cont-init.d/99-setup-user && \
     echo 'chown -R abc:abc /home/workspace/.cache' >> /custom-cont-init.d/99-setup-user && \
-    echo 'touch /home/workspace/.zsh_history' >> /custom-cont-init.d/99-setup-user && \
-    echo 'chown abc:abc /home/workspace/.zsh_history' >> /custom-cont-init.d/99-setup-user && \
+    echo 'touch /home/workspace/.zsh_history /home/workspace/.zshrc' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown abc:abc /home/workspace/.zsh_history /home/workspace/.zshrc' >> /custom-cont-init.d/99-setup-user && \
+    echo '[[ ! -f /home/workspace/.p10k.zsh ]] && cp /etc/skel/.p10k.zsh /home/workspace/.p10k.zsh' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown abc:abc /home/workspace/.p10k.zsh' >> /custom-cont-init.d/99-setup-user && \
     echo '# Replace default Debian .zshrc (has bare compinit that causes insecure dir warnings)' >> /custom-cont-init.d/99-setup-user && \
     echo 'if grep -q "prompt adam1" /home/workspace/.zshrc 2>/dev/null; then echo "# User customizations go here" > /home/workspace/.zshrc; fi' >> /custom-cont-init.d/99-setup-user && \
-    echo 'chown abc:abc /home/workspace/.zshrc' >> /custom-cont-init.d/99-setup-user && \
     echo '# Propagate GCP env vars into shell sessions' >> /custom-cont-init.d/99-setup-user && \
     echo 'echo "export GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT" > /etc/zsh/zshrc.gcp' >> /custom-cont-init.d/99-setup-user && \
     echo 'echo "export GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS" >> /etc/zsh/zshrc.gcp' >> /custom-cont-init.d/99-setup-user && \

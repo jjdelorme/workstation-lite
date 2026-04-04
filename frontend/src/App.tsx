@@ -322,8 +322,16 @@ function App() {
 
     if (name) {
       setPendingWorkstations(prev => new Set(prev).add(name));
+      if (action === 'start' || action === 'stop' || action === 'delete') {
+        setWorkstations(prev => prev.map(ws => 
+          ws.name === name 
+            ? { ...ws, status: action === 'stop' ? 'STOPPING...' : action === 'start' ? 'STARTING...' : 'DELETING...' } 
+            : ws
+        ));
+      }
     } else if (action === 'stop-all') {
       setPendingWorkstations(new Set(workstations.map(w => w.name)));
+      setWorkstations(prev => prev.map(ws => ({ ...ws, status: 'STOPPING...' })));
     }
 
     setNotification({ type: 'info', msg: `${action.replace('-', ' ').toUpperCase()} initiated...` });
@@ -478,6 +486,13 @@ function App() {
   const handleServiceAction = async (action: 'start' | 'stop' | 'delete', name: string) => {
     const url = `/api/services/${user_ns}/${action}/${name}`;
     setPendingServices(prev => new Set(prev).add(name));
+    if (action === 'start' || action === 'stop' || action === 'delete') {
+      setServices(prev => prev.map(svc => 
+        svc.name === name 
+          ? { ...svc, status: action === 'stop' ? 'STOPPING...' : action === 'start' ? 'STARTING...' : 'DELETING...' } 
+          : svc
+      ));
+    }
     setNotification({ type: 'info', msg: `${action.toUpperCase()} service ${name}...` });
     try {
       const response = await fetch(url, { method: 'POST' });
