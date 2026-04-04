@@ -54,10 +54,12 @@ RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/pow
 
 # 8. Create Global ZSH and Tmux Configurations (PVC Proof)
 RUN mkdir -p /etc/zsh && \
+    echo 'unsetopt WARN_CREATE_GLOBAL' > /etc/zsh/zshrc && \
     echo 'export LANG=en_US.UTF-8' >> /etc/zsh/zshrc && \
     echo 'export LC_ALL=en_US.UTF-8' >> /etc/zsh/zshrc && \
     echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
     echo 'zsh-newuser-install() { :; }' >> /etc/zsh/zshrc && \
+    echo '[ -f /etc/zsh/zshrc.gcp ] && source /etc/zsh/zshrc.gcp' >> /etc/zsh/zshrc && \
     echo 'export PATH=$PATH:/opt/google-cloud-sdk/bin' >> /etc/zsh/zshrc && \
     echo '[[ -z "$TMUX" ]] && export TERM=xterm-256color' >> /etc/zsh/zshrc && \
     echo 'export ZSH="/opt/oh-my-zsh"' >> /etc/zsh/zshrc && \
@@ -94,15 +96,17 @@ RUN mkdir -p /etc/cont-init.d && \
 chown abc:abc /home/workspace\n\
 mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc\n\
 chown -R abc:abc /home/workspace/.cache\n\
-touch /home/workspace/.zshrc /home/workspace/.zsh_history\n\
+if [ ! -s /home/workspace/.zshrc ]; then\n\
+  echo "# Workstation Lite Zsh Config" > /home/workspace/.zshrc\n\
+fi\n\
+touch /home/workspace/.zsh_history\n\
 chown abc:abc /home/workspace/.zshrc /home/workspace/.zsh_history\n\
-# Propagate injected GCP env vars to all user sessions
-# We use with-contenv to ensure we have access to the injected K8s env vars
-echo "export GOOGLE_CLOUD_PROJECT=\$(with-contenv bash -c 'echo \$GOOGLE_CLOUD_PROJECT')" >> /etc/zsh/zshrc
-echo "export GOOGLE_APPLICATION_CREDENTIALS=\$(with-contenv bash -c 'echo \$GOOGLE_APPLICATION_CREDENTIALS')" >> /etc/zsh/zshrc
-
-# Automatically fix insecure directories that trigger ZSH compinit warnings\n\
-chmod g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh/cache /home/workspace\n' > /etc/cont-init.d/99-setup-user && \
+# Propagate injected GCP env vars (idempotent)\n\
+echo "export GOOGLE_CLOUD_PROJECT=$(with-contenv bash -c "echo \$GOOGLE_CLOUD_PROJECT")" > /etc/zsh/zshrc.gcp\n\
+echo "export GOOGLE_APPLICATION_CREDENTIALS=$(with-contenv bash -c "echo \$GOOGLE_APPLICATION_CREDENTIALS")" >> /etc/zsh/zshrc.gcp\n\
+# Recursively fix insecure directories for ZSH compinit\n\
+chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom\n\
+chmod g-w,o-w /home/workspace\n' > /etc/cont-init.d/99-setup-user && \
     chmod +x /etc/cont-init.d/99-setup-user
 
 # Crucial: Must be root for S6 init to start. 
