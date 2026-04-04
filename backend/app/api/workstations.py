@@ -359,7 +359,8 @@ def save_workstation_config_endpoint(user_ns: str, name: str, req: SaveConfigReq
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "10Gi")
         gpu = req.gpu if req.gpu is not None else current_config.get("gpu")
         env_vars = req.env_vars if req.env_vars is not None else current_config.get("env_vars", {})
-        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu, env_vars)
+        run_as_root = req.run_as_root if req.run_as_root is not None else current_config.get("run_as_root", False)
+        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu, env_vars, run_as_root)
         return {"status": "ok", "message": f"Config for {name} saved"}
     except Exception as e:
         logger.error(f"Error saving config: {e}")
@@ -382,6 +383,7 @@ def list_all_workstations(user_ns: str):
                 memory=config.get("memory", "2Gi"),
                 disk_size=config.get("disk_size", "10Gi"),
                 gpu=config.get("gpu"),
+                run_as_root=config.get("run_as_root", False),
                 env_vars=config.get("env_vars", {}),
                 pod_name=w.get("pod_name"),
                 pod_ready=w.get("pod_ready", False),
@@ -404,6 +406,7 @@ def start_named_workstation(user_ns: str, name: str):
         disk_size = config.get("disk_size", "10Gi")
         gpu = config.get("gpu")
         user_env_vars = config.get("env_vars", {}) if isinstance(config, dict) else {}
+        run_as_root = config.get("run_as_root", False)
         final_image = custom_image if custom_image else settings.workstation_image
 
         # 3. Ensure PVC exists
@@ -421,6 +424,7 @@ def start_named_workstation(user_ns: str, name: str):
             memory=memory,
             gpu=gpu,
             env_vars=user_env_vars,
+            run_as_root=run_as_root,
         )
         return {"status": "ok", "message": f"Workstation {name} start initiated", "image": final_image}
     except Exception as e:
@@ -499,6 +503,7 @@ def get_connect_script(user_ns: str, name: str, request: Request):
         
         config = get_k8s_manager().get_workstation_config(user_ns, name)
         ports = config.get("ports", []) if isinstance(config, dict) else []
+        run_as_root = config.get("run_as_root", False) if isinstance(config, dict) else False
 
         if ports:
             lsof_full = "lsof " + " ".join([f"-ti:{p}" for p in ports]) + " | xargs kill -9 2>/dev/null || true"
@@ -551,7 +556,11 @@ else
     SHELL_BIN="/bin/bash"
 fi
 
-kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- su -l abc -s $SHELL_BIN < /dev/tty
+if [ "{run_as_root}" = "True" ]; then
+    kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- $SHELL_BIN < /dev/tty
+else
+    kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- su -l abc -s $SHELL_BIN < /dev/tty
+fi
 """
         return script
     except Exception as e:
@@ -590,13 +599,15 @@ def snapshot_workstation(user_ns: str):
 @router.get("/{user_ns}/status/{name}", response_model=WorkstationResponse)
 def get_workstation_status(user_ns: str, name: str):
     res = get_k8s_manager().get_workstation_status(user_ns, name)
+    config = get_k8s_manager().get_workstation_config(user_ns, name)
     return WorkstationResponse(
         name=name,
         user_ns=user_ns,
         status=WorkstationStatus(res["status"]),
         pod_name=res["pod_name"],
         pod_ready=res["pod_ready"],
-        image=res.get("image")
+        image=res.get("image"),
+        run_as_root=config.get("run_as_root", False)
     )
 
 @router.get("/nodes")

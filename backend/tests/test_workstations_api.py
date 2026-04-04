@@ -81,6 +81,36 @@ def test_get_status(mock_managers):
     assert response.status_code == 200
     assert response.json()["status"] == "RUNNING"
 
+def test_start_workstation_as_root(mock_managers):
+    _, mock_k8s, _, _ = mock_managers
+    mock_k8s.get_workstation_config.return_value = {
+        "image": "custom-image:latest",
+        "run_as_root": True
+    }
+    
+    response = client.post("/api/workstations/user-1/start/workstation")
+    
+    assert response.status_code == 200
+    assert mock_k8s.apply_statefulset.called
+    args, kwargs = mock_k8s.apply_statefulset.call_args
+    # args: (user_ns, name, final_image, replicas, ports, cpu, memory, gpu, env_vars, run_as_root)
+    assert kwargs.get("run_as_root") is True
+
+def test_save_config_as_root(mock_managers):
+    _, mock_k8s, _, _ = mock_managers
+    mock_k8s.get_workstation_config.return_value = {}
+
+    response = client.post(
+        "/api/workstations/user-1/save-config/workstation",
+        json={"run_as_root": True, "image": "some-image"}
+    )
+
+    assert response.status_code == 200
+    assert mock_k8s.save_workstation_config.called
+    # args: (user_ns, name, image, ports, cpu, memory, disk_size, gpu, env_vars, run_as_root)
+    call_args = mock_k8s.save_workstation_config.call_args[0]
+    assert call_args[9] is True
+
 @patch("app.api.workstations.get_compute_manager")
 def test_snapshot_workstation(mock_get_compute, mock_managers):
     _, mock_k8s, _, _ = mock_managers
