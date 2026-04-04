@@ -39,7 +39,8 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
     bash -c "source $NVM_DIR/nvm.sh && \
              nvm install 20 && \
              nvm alias default 20 && \
-             npm install -g @google/gemini-cli @anthropic-ai/claude-code" && \
+             npm install -g @google/gemini-cli && \
+             curl -fsSL https://claude.ai/install.sh | bash" && \
     git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
@@ -47,7 +48,7 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
 RUN ln -s $(bash -c "source $NVM_DIR/nvm.sh && which node") /usr/local/bin/node && \
     ln -s $(bash -c "source $NVM_DIR/nvm.sh && which npm") /usr/local/bin/npm && \
     ln -s $(bash -c "source $NVM_DIR/nvm.sh && which gemini") /usr/local/bin/gemini && \
-    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which claude") /usr/local/bin/claude
+    ([ -f /usr/local/bin/claude ] || ln -s $(bash -c "source $NVM_DIR/nvm.sh && which claude") /usr/local/bin/claude)
 
 # 7. Download a lean default Powerlevel10k config
 RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
