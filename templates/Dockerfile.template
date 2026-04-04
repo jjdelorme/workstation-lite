@@ -89,32 +89,30 @@ RUN usermod -d /home/workspace -m abc && \
     chown -R abc:abc /opt/nvm /opt/oh-my-zsh /opt/oh-my-zsh-custom && \
     chmod -R g-w,o-w /usr/share/zsh /usr/local/share/zsh 2>/dev/null || true
 
-# 11. Runtime Initialization Script
-# Ensures home dir and dotfiles are owned by abc when a PVC overmounts /home/workspace
-# Also propagates GCP environment variables that would otherwise be stripped by 'su -l'
-RUN mkdir -p /etc/cont-init.d && \
-    printf '#!/with-contenv bash\n\
-chown abc:abc /home/workspace\n\
-mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc\n\
-chown -R abc:abc /home/workspace/.cache\n\
-if [ ! -s /home/workspace/.zshrc ]; then\n\
-  echo "# Workstation Lite Zsh Config" > /home/workspace/.zshrc\n\
-fi\n\
-touch /home/workspace/.zsh_history\n\
-chown abc:abc /home/workspace/.zshrc /home/workspace/.zsh_history\n\
-# Propagate injected GCP env vars (idempotent)\n\
-echo "export GOOGLE_CLOUD_PROJECT=$(with-contenv bash -c "echo \$GOOGLE_CLOUD_PROJECT")" > /etc/zsh/zshrc.gcp\n\
-echo "export GOOGLE_APPLICATION_CREDENTIALS=$(with-contenv bash -c "echo \$GOOGLE_APPLICATION_CREDENTIALS")" >> /etc/zsh/zshrc.gcp\n\
-# Activate gcloud with the mounted service account credentials\n\
-if [ -f "\$GOOGLE_APPLICATION_CREDENTIALS" ]; then\n\
-  su -s /bin/bash abc -c "/opt/google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=\$GOOGLE_APPLICATION_CREDENTIALS --quiet" 2>/dev/null || true\n\
-fi\n\
-# Fix ownership of zsh dirs to match runtime abc UID (build-time UID may differ)\n\
-chown -R abc:abc /opt/oh-my-zsh /opt/oh-my-zsh-custom /opt/nvm\n\
-# Recursively fix insecure directories for ZSH compinit\n\
-chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom\n\
-chmod g-w,o-w /home/workspace\n' > /etc/cont-init.d/99-setup-user && \
-    chmod +x /etc/cont-init.d/99-setup-user
+# 11. Runtime Initialization Script (runs on every container start via S6)
+# Fixes ownership after PVC mount, propagates GCP env vars, activates gcloud
+RUN mkdir -p /custom-cont-init.d && \
+    echo '#!/bin/bash' > /custom-cont-init.d/99-setup-user && \
+    echo 'chown abc:abc /home/workspace' >> /custom-cont-init.d/99-setup-user && \
+    echo 'mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown -R abc:abc /home/workspace/.cache' >> /custom-cont-init.d/99-setup-user && \
+    echo 'touch /home/workspace/.zsh_history' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown abc:abc /home/workspace/.zsh_history' >> /custom-cont-init.d/99-setup-user && \
+    echo '# Replace default Debian .zshrc (has bare compinit that causes insecure dir warnings)' >> /custom-cont-init.d/99-setup-user && \
+    echo 'if grep -q "prompt adam1" /home/workspace/.zshrc 2>/dev/null; then echo "# User customizations go here" > /home/workspace/.zshrc; fi' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown abc:abc /home/workspace/.zshrc' >> /custom-cont-init.d/99-setup-user && \
+    echo '# Propagate GCP env vars into shell sessions' >> /custom-cont-init.d/99-setup-user && \
+    echo 'echo "export GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT" > /etc/zsh/zshrc.gcp' >> /custom-cont-init.d/99-setup-user && \
+    echo 'echo "export GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS" >> /etc/zsh/zshrc.gcp' >> /custom-cont-init.d/99-setup-user && \
+    echo '# Activate gcloud with mounted service account credentials' >> /custom-cont-init.d/99-setup-user && \
+    echo 'if [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then' >> /custom-cont-init.d/99-setup-user && \
+    echo '  su -s /bin/bash abc -c "/opt/google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS --quiet" || true' >> /custom-cont-init.d/99-setup-user && \
+    echo 'fi' >> /custom-cont-init.d/99-setup-user && \
+    echo '# Fix ownership of zsh/nvm dirs (build-time UID differs from runtime UID)' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown -R abc:abc /opt/oh-my-zsh /opt/oh-my-zsh-custom /opt/nvm' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chmod g-w,o-w /home/workspace' >> /custom-cont-init.d/99-setup-user && \
+    chmod +x /custom-cont-init.d/99-setup-user
 
 # Crucial: Must be root for S6 init to start. 
 USER root
