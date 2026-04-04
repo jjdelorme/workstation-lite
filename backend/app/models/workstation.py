@@ -19,6 +19,7 @@ class WorkstationResponse(BaseModel):
     memory: str = "2Gi"
     disk_size: str = "10Gi"
     gpu: Optional[str] = None
+    run_as_root: bool = False
     env_vars: dict[str, str] = {}
     pod_name: Optional[str] = None
     pod_ready: bool = False
@@ -42,4 +43,5 @@ class SaveConfigRequest(BaseModel):
     memory: Optional[str] = "2Gi"
     disk_size: Optional[str] = "10Gi"
     gpu: Optional[str] = None
+    run_as_root: Optional[bool] = False
     env_vars: Optional[dict[str, str]] = None

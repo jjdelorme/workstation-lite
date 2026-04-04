@@ -54,6 +54,35 @@ def test_apply_statefulset(mock_k8s_client):
     assert sts.spec.replicas == 1
     assert sts.spec.template.spec.containers[0].image == "image:latest"
 
+def test_apply_statefulset_run_as_root(mock_k8s_client):
+    _, mock_apps = mock_k8s_client
+    manager = K8sManager()
+    
+    mock_apps.read_namespaced_stateful_set.side_effect = Exception("Not Found")
+    
+    manager.apply_statefulset("user-1", "workstation", "image:latest", 1, run_as_root=True)
+    
+    assert mock_apps.create_namespaced_stateful_set.called
+    kwargs = mock_apps.create_namespaced_stateful_set.call_args[1]
+    sts = kwargs['body']
+    
+    # Check security context
+    pod_spec = sts.spec.template.spec
+    assert pod_spec.security_context.fs_group == 0
+    
+    container = pod_spec.containers[0]
+    assert container.security_context.run_as_user == 0
+    assert container.security_context.run_as_group == 0
+    
+    # Check env vars
+    env_vars = {e.name: e.value for e in container.env}
+    assert env_vars["PUID"] == "0"
+    assert env_vars["PGID"] == "0"
+    
+    # Check init container
+    init_container = pod_spec.init_containers[0]
+    assert "chown -R 0:0" in init_container.command[2]
+
 def test_scale_workstation(mock_k8s_client):
     _, mock_apps = mock_k8s_client
     manager = K8sManager()
@@ -72,12 +101,14 @@ def test_save_workstation_config(mock_k8s_client):
     # Mock CM doesn't exist initially
     mock_core.read_namespaced_config_map.side_effect = Exception("Not Found")
     
-    manager.save_workstation_config("user-1", "ws-1", "custom-image")
+    manager.save_workstation_config("user-1", "ws-1", "custom-image", run_as_root=True)
     
     assert mock_core.create_namespaced_config_map.called
     args, kwargs = mock_core.create_namespaced_config_map.call_args
     import json
-    assert json.loads(kwargs['body'].data['ws-1'])['image'] == "custom-image"
+    data = json.loads(kwargs['body'].data['ws-1'])
+    assert data['image'] == "custom-image"
+    assert data['run_as_root'] is True
 
 def test_get_workstation_config(mock_k8s_client):
     mock_core, _ = mock_k8s_client
@@ -85,11 +116,12 @@ def test_get_workstation_config(mock_k8s_client):
     
     mock_cm = MagicMock()
     import json
-    mock_cm.data = {"ws-1": json.dumps({"image": "custom-image", "ports": [3000]})}
+    mock_cm.data = {"ws-1": json.dumps({"image": "custom-image", "ports": [3000], "run_as_root": True})}
     mock_core.read_namespaced_config_map.return_value = mock_cm
     
     config = manager.get_workstation_config("user-1", "ws-1")
     assert config["image"] == "custom-image"
+    assert config["run_as_root"] is True
 
 def test_get_pvc_volume_handle(mock_k8s_client):
     mock_core, _ = mock_k8s_client

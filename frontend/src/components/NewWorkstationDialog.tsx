@@ -15,7 +15,7 @@ export interface ImageMetadata {
 interface NewWorkstationDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>) => void;
+  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>, runAsRoot: boolean) => void;
   availableImages: ImageMetadata[];
 }
 
@@ -27,6 +27,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
   const [memory, setMemory] = useState('2Gi');
   const [diskSize, setDiskSize] = useState('10Gi');
   const [gpuEnabled, setGpuEnabled] = useState(false);
+  const [runAsRoot, setRunAsRoot] = useState(false);
   const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>([]);
 
   const handleConfirm = () => {
@@ -42,7 +43,8 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
         memory,
         diskSize,
         gpuEnabled ? 'nvidia-l4' : null,
-        envVars
+        envVars,
+        runAsRoot
       );
       setName('');
       setSelectedImage('');
@@ -51,6 +53,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
       setMemory('2Gi');
       setDiskSize('10Gi');
       setGpuEnabled(false);
+      setRunAsRoot(false);
       setEnvEntries([]);
       onClose();
     }
@@ -138,15 +141,27 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
             helperText="Specify the ports you want to forward when connecting."
           />
 
-          <FormControlLabel
-            control={<Checkbox checked={gpuEnabled} onChange={(e) => setGpuEnabled(e.target.checked)} />}
-            label="Attach NVIDIA L4 GPU"
-          />
-          {gpuEnabled && (
-            <Typography variant="caption" color="text.secondary">
-              An NVIDIA L4 GPU will be attached. GKE Autopilot will provision a GPU node automatically (may take several minutes).
-            </Typography>
-          )}
+          <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+            <FormControlLabel
+              control={<Checkbox checked={gpuEnabled} onChange={(e) => setGpuEnabled(e.target.checked)} />}
+              label="Attach NVIDIA L4 GPU"
+            />
+            {gpuEnabled && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
+                An NVIDIA L4 GPU will be attached. GKE Autopilot will provision a GPU node automatically (may take several minutes).
+              </Typography>
+            )}
+
+            <FormControlLabel
+              control={<Checkbox checked={runAsRoot} onChange={(e) => setRunAsRoot(e.target.checked)} />}
+              label="Run as Root"
+            />
+            {runAsRoot && (
+              <Typography variant="caption" color="warning.main" sx={{ ml: 4, mb: 1 }}>
+                Warning: Running as root is less secure and only recommended for specific troubleshooting or legacy images.
+              </Typography>
+            )}
+          </Box>
 
           <Divider />
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

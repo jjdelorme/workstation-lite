@@ -140,7 +140,8 @@ class K8sManager:
                 logger.error(f"Failed to create PVC {name} in {user_ns}: {e}")
 
     def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None,
-                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None, env_vars: dict = None):
+                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None, env_vars: dict = None,
+                          run_as_root: bool = False):
         if ports is None:
             ports = []
         self._refresh_config()
@@ -187,9 +188,11 @@ class K8sManager:
 
         # Environment variables for GCP credentials
         from app.core.config import settings
+        uid = "0" if run_as_root else "1000"
+        gid = "0" if run_as_root else "1000"
         env_list = [
-            client.V1EnvVar(name="PUID", value="1000"),
-            client.V1EnvVar(name="PGID", value="1000"),
+            client.V1EnvVar(name="PUID", value=uid),
+            client.V1EnvVar(name="PGID", value=gid),
             client.V1EnvVar(name="GOOGLE_APPLICATION_CREDENTIALS", value="/var/secrets/google/adc.json"),
             client.V1EnvVar(name="GOOGLE_CLOUD_PROJECT", value=settings.gcp_project_id or ""),
         ]
@@ -198,6 +201,12 @@ class K8sManager:
         if env_vars:
             for k, v in env_vars.items():
                 env_list.append(client.V1EnvVar(name=k, value=v))
+
+        # Pod and Container security context
+        pod_sc = client.V1PodSecurityContext(fs_group=int(gid))
+        container_sc = None
+        if run_as_root:
+            container_sc = client.V1SecurityContext(run_as_user=0, run_as_group=0)
 
         sts = client.V1StatefulSet(
             metadata=client.V1ObjectMeta(
@@ -214,9 +223,7 @@ class K8sManager:
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(labels={"app": name}),
                     spec=client.V1PodSpec(
-                        security_context=client.V1PodSecurityContext(
-                            fs_group=1000
-                        ),
+                        security_context=pod_sc,
                         image_pull_secrets=[client.V1LocalObjectReference(name="artifact-registry-key")],
                         node_selector=node_selector,
                         tolerations=tolerations,
@@ -224,7 +231,7 @@ class K8sManager:
                             client.V1Container(
                                 name="fix-permissions",
                                 image="busybox",
-                                command=["sh", "-c", "chown -R 1000:1000 /home/workspace"],
+                                command=["sh", "-c", f"chown -R {uid}:{gid} /home/workspace"],
                                 security_context=client.V1SecurityContext(
                                     run_as_user=0
                                 ),
@@ -239,6 +246,7 @@ class K8sManager:
                                 image=image,
                                 ports=container_ports,
                                 env=env_list,
+                                security_context=container_sc,
                                 resources=client.V1ResourceRequirements(
                                     requests=resource_requests,
                                     limits=resource_limits if resource_limits else None
@@ -488,14 +496,23 @@ class K8sManager:
 
     def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None,
                                 cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None,
-                                env_vars: dict = None):
+                                env_vars: dict = None, run_as_root: bool = False):
         if ports is None:
             ports = []
         self._refresh_config()
         if not self.core_api: return
         import json
         cm_name = "workstation-configs"
-        config_data = json.dumps({"image": image, "ports": ports, "cpu": cpu, "memory": memory, "disk_size": disk_size, "gpu": gpu, "env_vars": env_vars or {}})
+        config_data = json.dumps({
+            "image": image, 
+            "ports": ports, 
+            "cpu": cpu, 
+            "memory": memory, 
+            "disk_size": disk_size, 
+            "gpu": gpu, 
+            "env_vars": env_vars or {},
+            "run_as_root": run_as_root
+        })
         try:
             cm = self.core_api.read_namespaced_config_map(name=cm_name, namespace=user_ns)
             if not cm.data: cm.data = {}
@@ -513,7 +530,7 @@ class K8sManager:
 
     def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
         self._refresh_config()
-        default_config = {"image": None, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
+        default_config = {"image": None, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}, "run_as_root": False}
         if not self.core_api: return default_config
         cm_name = "workstation-configs"
         try:
@@ -532,10 +549,11 @@ class K8sManager:
                     "disk_size": parsed.get("disk_size", "10Gi"),
                     "gpu": parsed.get("gpu"),
                     "env_vars": parsed.get("env_vars", {}),
+                    "run_as_root": parsed.get("run_as_root", False),
                 }
             except json.JSONDecodeError:
                 # Backwards compatibility for old config format
-                return {"image": val, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}}
+                return {"image": val, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}, "run_as_root": False}
         except Exception:
             return default_config
 
