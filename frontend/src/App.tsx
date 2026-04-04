@@ -113,6 +113,8 @@ function App() {
   const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
   const [adcExists, setAdcExists] = useState(false);
   const [adcJson, setAdcJson] = useState('');
+  const [sshKeyExists, setSshKeyExists] = useState(false);
+  const [sshKey, setSshKey] = useState('');
 
   const fetchWorkstations = useCallback(async () => {
     try {
@@ -230,6 +232,22 @@ function App() {
     }
   }, []);
 
+  const fetchSshKeyStatus = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/workstations/${user_ns}/ssh-key`);
+      if (response.ok) {
+        const data = await response.json();
+        setSshKeyExists(data.exists);
+      } else {
+        const data = await response.json().catch(() => ({ detail: response.statusText }));
+        setNotification({ type: 'error', msg: `Failed to fetch SSH key status: ${data.detail || response.statusText}` });
+      }
+    } catch (error) {
+      console.error("Failed to fetch SSH key status:", error);
+      setNotification({ type: 'error', msg: `Failed to connect to backend: ${error}` });
+    }
+  }, []);
+
   const fetchServices = useCallback(async () => {
     try {
       const response = await fetch(`/api/services/${user_ns}/list`, {
@@ -264,9 +282,10 @@ function App() {
     fetchConfig();
     fetchNodes();
     fetchAdcStatus();
+    fetchSshKeyStatus();
     fetchServices();
     fetchServiceCatalog();
-  }, [fetchWorkstations, fetchImages, fetchClusterStatus, fetchConfig, fetchNodes, fetchAdcStatus, fetchServices, fetchServiceCatalog]);
+  }, [fetchWorkstations, fetchImages, fetchClusterStatus, fetchConfig, fetchNodes, fetchAdcStatus, fetchSshKeyStatus, fetchServices, fetchServiceCatalog]);
 
   const TERMINAL_BUILD_STATUSES = ['SUCCESS', 'FAILURE', 'INTERNAL_ERROR', 'TIMEOUT', 'CANCELLED', 'EXPIRED'];
 
@@ -400,6 +419,31 @@ function App() {
       }
     } catch (error) {
       setNotification({ type: 'error', msg: `Error saving credentials: ${error}` });
+    }
+  };
+
+  const handleSaveSshKey = async () => {
+    if (!sshKey.trim()) {
+      setNotification({ type: 'error', msg: 'Please paste your private SSH key.' });
+      return;
+    }
+    setNotification({ type: 'info', msg: 'Saving SSH key...' });
+    try {
+      const response = await fetch(`/api/workstations/${user_ns}/ssh-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssh_key: sshKey }),
+      });
+      if (response.ok) {
+        setNotification({ type: 'success', msg: 'SSH key saved successfully.' });
+        setSshKeyExists(true);
+        setSshKey('');
+      } else {
+        const data = await response.json();
+        setNotification({ type: 'error', msg: `Failed to save SSH key: ${data.detail}` });
+      }
+    } catch (error) {
+      setNotification({ type: 'error', msg: `Error saving SSH key: ${error}` });
     }
   };
 
@@ -1165,6 +1209,35 @@ function App() {
                 />
                 <Button variant="contained" onClick={handleSaveAdc} disabled={!adcJson.trim()}>
                   Save Credentials
+                </Button>
+              </Paper>
+
+              {/* SSH Key */}
+              <Paper sx={{ p: 3, mt: 3 }}>
+                <Typography variant="subtitle1" gutterBottom>SSH Private Key</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Upload a private SSH key to inject into workstation pods. It will be mounted at <code>~/.ssh/id_rsa</code> with 0600 permissions.
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                  <Typography variant="body2">Status:</Typography>
+                  <Chip
+                    label={sshKeyExists ? 'Configured' : 'Not Configured'}
+                    color={sshKeyExists ? 'success' : 'default'}
+                    size="small"
+                  />
+                </Box>
+                <TextField
+                  label="Private Key (id_rsa)"
+                  placeholder='-----BEGIN OPENSSH PRIVATE KEY-----...'
+                  multiline
+                  rows={4}
+                  fullWidth
+                  value={sshKey}
+                  onChange={(e) => setSshKey(e.target.value)}
+                  sx={{ mb: 2, fontFamily: 'monospace' }}
+                />
+                <Button variant="contained" onClick={handleSaveSshKey} disabled={!sshKey.trim()}>
+                  Save SSH Key
                 </Button>
               </Paper>
 

@@ -107,9 +107,9 @@ def test_save_config_as_root(mock_managers):
 
     assert response.status_code == 200
     assert mock_k8s.save_workstation_config.called
-    # args: (user_ns, name, image, ports, cpu, memory, disk_size, gpu, env_vars, run_as_root)
+    # args: (user_ns, name, image, ports, cpu, memory, disk_size, gpu, use_spot, env_vars, run_as_root)
     call_args = mock_k8s.save_workstation_config.call_args[0]
-    assert call_args[9] is True
+    assert call_args[10] is True
 
 @patch("app.api.workstations.get_compute_manager")
 def test_snapshot_workstation(mock_get_compute, mock_managers):

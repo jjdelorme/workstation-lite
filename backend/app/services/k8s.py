@@ -182,6 +182,7 @@ class K8sManager:
         volume_mounts = [
             client.V1VolumeMount(name="home", mount_path="/home/workspace"),
             client.V1VolumeMount(name="gcp-adc", mount_path="/var/secrets/google", read_only=True),
+            client.V1VolumeMount(name="ssh-key", mount_path="/home/workspace/.ssh", read_only=True),
         ]
         volumes = [
             client.V1Volume(
@@ -192,6 +193,14 @@ class K8sManager:
                 name="gcp-adc",
                 secret=client.V1SecretVolumeSource(
                     secret_name="gcp-adc-credentials",
+                    optional=True
+                )
+            ),
+            client.V1Volume(
+                name="ssh-key",
+                secret=client.V1SecretVolumeSource(
+                    secret_name="ssh-key-secret",
+                    default_mode=0o600,
                     optional=True
                 )
             ),
@@ -635,6 +644,34 @@ class K8sManager:
         if not self.core_api: return False
         try:
             self.core_api.read_namespaced_secret(name="gcp-adc-credentials", namespace=user_ns)
+            return True
+        except Exception:
+            return False
+
+    def save_ssh_key(self, user_ns: str, ssh_key: str):
+        self._refresh_config()
+        if not self.core_api: return
+        import base64
+
+        secret = client.V1Secret(
+            metadata=client.V1ObjectMeta(name="ssh-key-secret"),
+            type="Opaque",
+            data={"id_rsa": base64.b64encode(ssh_key.encode()).decode()}
+        )
+        try:
+            self.core_api.read_namespaced_secret(name="ssh-key-secret", namespace=user_ns)
+            self.core_api.replace_namespaced_secret(name="ssh-key-secret", namespace=user_ns, body=secret)
+        except Exception:
+            try:
+                self.core_api.create_namespaced_secret(namespace=user_ns, body=secret)
+            except Exception as e:
+                logger.error(f"Failed to create SSH key secret in {user_ns}: {e}")
+
+    def check_ssh_key(self, user_ns: str) -> bool:
+        self._refresh_config()
+        if not self.core_api: return False
+        try:
+            self.core_api.read_namespaced_secret(name="ssh-key-secret", namespace=user_ns)
             return True
         except Exception:
             return False

@@ -644,3 +644,21 @@ def save_adc_secret(user_ns: str, req: AdcSecretRequest):
     except Exception as e:
         logger.error(f"Error saving ADC secret: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class SshKeyRequest(BaseModel):
+    ssh_key: str
+
+@router.get("/{user_ns}/ssh-key")
+def check_ssh_key(user_ns: str):
+    exists = get_k8s_manager().check_ssh_key(user_ns)
+    return {"exists": exists}
+
+@router.post("/{user_ns}/ssh-key")
+def save_ssh_key(user_ns: str, req: SshKeyRequest):
+    try:
+        get_k8s_manager().ensure_namespace(user_ns)
+        get_k8s_manager().save_ssh_key(user_ns, req.ssh_key)
+        return {"status": "ok", "message": "SSH key saved"}
+    except Exception as e:
+        logger.error(f"Error saving SSH key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
