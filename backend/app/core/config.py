@@ -10,4 +10,15 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.gcp_project_id:
+            try:
+                import google.auth
+                _, project = google.auth.default()
+                if project:
+                    self.gcp_project_id = project
+            except Exception:
+                pass
+
 settings = Settings()

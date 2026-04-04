@@ -604,6 +604,18 @@ class K8sManager:
         self._refresh_config()
         if not self.core_api: return
         import base64
+        import json
+        
+        # Try to extract project ID from the uploaded JSON
+        try:
+            data = json.loads(adc_json)
+            project_id = data.get("project_id") or data.get("quota_project_id")
+            if project_id and not settings.gcp_project_id:
+                logger.info(f"Extracted project ID {project_id} from uploaded ADC JSON")
+                settings.gcp_project_id = project_id
+        except Exception as e:
+            logger.warning(f"Could not parse project ID from uploaded ADC JSON: {e}")
+
         secret = client.V1Secret(
             metadata=client.V1ObjectMeta(name="gcp-adc-credentials"),
             type="Opaque",
