@@ -1,0 +1,161 @@
+FROM linuxserver/vscodium-web:latest                                                                                                                                                                                        
+                                                                                                               
+# 1. Install system dependencies (as root)
+# Added libgl1 and libglib2.0-0 for vLLM/OpenCode compatibility
+RUN apt-get update && apt-get install -y \                                                                  
+    curl git wget zsh vim tmux jq build-essential \
+    python3 python3-pip python3.12-venv golang-go fontconfig sudo locales openssh-server \
+    libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*                                                                                                                                                                                          
+                                                                                                                                                                                                                               
+# Generate and set locales (Essential for Powerlevel10k, Zsh encoding, and Tmux)
+RUN locale-gen en_US.UTF-8                                                                                                                                                                                                  
+ENV LANG=en_US.UTF-8                                                                                                                                                                                                        
+ENV LC_ALL=en_US.UTF-8                                                                                                                                                                                                      
+                                                                                                                                                                                                                               
+# 2. Install Fonts
+RUN mkdir -p /usr/share/fonts/truetype/meslo && \
+    wget -q -P /usr/share/fonts/truetype/meslo https://github.com/romkatv/dotfiles-public/raw/master/.local/share/fonts/NerdFonts/MesloLGS%20NF%20Regular.ttf && \
+    fc-cache -fv
+
+# 3. Install gcloud SDK (Global location)
+RUN mkdir -p /opt/google-cloud-sdk && \
+    curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz && \
+    tar -xf google-cloud-cli-linux-x86_64.tar.gz -C /opt && \
+    rm google-cloud-cli-linux-x86_64.tar.gz && \
+    /opt/google-cloud-sdk/install.sh --quiet
+
+# 4. Global Tool Locations & Environment
+ENV NVM_DIR=/opt/nvm
+ENV OH_MY_ZSH=/opt/oh-my-zsh
+ENV ZSH_CUSTOM=/opt/oh-my-zsh-custom
+ENV ZSH_DISABLE_COMPFIX=true
+# Pre-set PATH for build layers to find gcloud
+ENV PATH=/opt/google-cloud-sdk/bin:$PATH
+ENV CLAUDE_CODE_USE_VERTEX=1
+
+# 5. Install NVM, Node, npm, Gemini CLI, Oh My Zsh, and P10k
+RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
+    bash -c "source $NVM_DIR/nvm.sh && \
+             nvm install 20 && \
+             nvm alias default 20 && \
+             npm install -g @google/gemini-cli" && \
+    git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
+
+# 6. Install Claude Code
+RUN bash -c "source $NVM_DIR/nvm.sh && curl -fsSL https://claude.ai/install.sh | bash"
+
+# 7. Install vLLM and OpenCode
+# vLLM is installed globally for use by the S6 service
+RUN pip3 install vllm
+# OpenCode is installed via npm and linked to /usr/local/bin
+RUN bash -c "source $NVM_DIR/nvm.sh && npm install -g opencode-ai"
+
+# 8. Ensure tools are globally available
+RUN ln -s $(bash -c "source $NVM_DIR/nvm.sh && which node") /usr/local/bin/node && \
+    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which npm") /usr/local/bin/npm && \
+    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which claude") /usr/local/bin/claude && \
+    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which opencode") /usr/local/bin/opencode
+
+# 9. Download a lean default Powerlevel10k config
+RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
+
+# 10. Create Global ZSH and Tmux Configurations (PVC Proof)
+# Configured to automatically point to local vLLM for OpenCode
+RUN mkdir -p /etc/zsh && \
+    echo 'unsetopt WARN_CREATE_GLOBAL' > /etc/zsh/zshrc && \
+    echo 'export LANG=en_US.UTF-8' >> /etc/zsh/zshrc && \
+    echo 'export LC_ALL=en_US.UTF-8' >> /etc/zsh/zshrc && \
+    echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
+    echo 'zsh-newuser-install() { :; }' >> /etc/zsh/zshrc && \
+    echo '[ -f /etc/zsh/zshrc.gcp ] && source /etc/zsh/zshrc.gcp' >> /etc/zsh/zshrc && \
+    echo 'export PATH=$PATH:/opt/google-cloud-sdk/bin' >> /etc/zsh/zshrc && \
+    echo '[[ -z "$TMUX" ]] && export TERM=xterm-256color' >> /etc/zsh/zshrc && \
+    echo 'export ZSH="/opt/oh-my-zsh"' >> /etc/zsh/zshrc && \
+    echo 'export ZSH_CUSTOM="/opt/oh-my-zsh-custom"' >> /etc/zsh/zshrc && \
+    echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> /etc/zsh/zshrc && \
+    echo 'source $ZSH/oh-my-zsh.sh' >> /etc/zsh/zshrc && \
+    echo 'export NVM_DIR="/opt/nvm"' >> /etc/zsh/zshrc && \
+    echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /etc/zsh/zshrc && \
+    echo 'export CLAUDE_CODE_USE_VERTEX=1' >> /etc/zsh/zshrc && \
+    echo 'export OPENAI_API_BASE=http://localhost:8000/v1' >> /etc/zsh/zshrc && \
+    echo 'export OPENAI_API_KEY=local' >> /etc/zsh/zshrc && \
+    echo '[[ ! -f ~/.p10k.zsh ]] && cp /etc/skel/.p10k.zsh ~/.p10k.zsh' >> /etc/zsh/zshrc && \
+    echo 'source ~/.p10k.zsh' >> /etc/zsh/zshrc
+
+# Global Tmux Config
+RUN echo 'set -g default-terminal "screen-256color"' > /etc/tmux.conf && \
+    echo 'set -g default-shell /bin/zsh' >> /etc/tmux.conf
+
+# 11. Configure SSHD to Accept Env and Force abc User
+RUN mkdir -p /run/sshd /etc/ssh && \
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    echo "AcceptEnv LANG LC_*" >> /etc/ssh/sshd_config && \
+    echo "AllowUsers abc" >> /etc/ssh/sshd_config
+
+# 12. GPU and vLLM Environment Variables
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
+ENV OPENAI_API_BASE=http://localhost:8000/v1
+ENV OPENAI_API_KEY=local
+
+# 13. Pre-configure OpenCode for abc user
+# This sets the local vLLM as the default provider
+RUN mkdir -p /etc/skel/.config/opencode && \
+    printf '{\n\
+  "provider": "openai",\n\
+  "openai": {\n\
+    "apiKey": "local",\n\
+    "baseURL": "http://localhost:8000/v1",\n\
+    "model": "google/gemma-4-31B-it"\n\
+  }\n\
+}\n' > /etc/skel/.config/opencode/opencode.json
+
+# 14. Add vLLM as an S6 service
+# This service starts automatically on container launch
+RUN mkdir -p /etc/services.d/vllm && \
+    printf "#!/with-contenv bash\n\
+# We use AWQ quantization to fit Gemma 4 31B on 24GB L4\n\
+# Use --quantization awq for official quantized variants or --quantization gptq if applicable\n\
+exec python3 -m vllm.entrypoints.openai.api_server \n\
+    --model google/gemma-4-31B-it \n\
+    --quantization awq \n\
+    --dtype half \n\
+    --gpu-memory-utilization 0.9 \n\
+    --port 8000\n" > /etc/services.d/vllm/run && \
+    chmod +x /etc/services.d/vllm/run
+
+# 15. Finalize User Setup
+RUN usermod -d /home/workspace -m abc && \
+    usermod --shell /bin/zsh abc && \
+    usermod --shell /bin/zsh root && \
+    chown -R abc:abc /opt/nvm /opt/oh-my-zsh /opt/oh-my-zsh-custom
+
+# 16. Runtime Initialization Script
+# Ensures home dir, config files, and dotfiles are owned by abc when a PVC overmounts /home/workspace
+RUN mkdir -p /etc/cont-init.d && \
+    printf '#!/with-contenv bash\n\
+chown abc:abc /home/workspace\n\
+mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc /home/workspace/.config/opencode\n\
+# Copy default OpenCode config if it doesn't exist\n\
+[[ ! -f /home/workspace/.config/opencode/opencode.json ]] && cp /etc/skel/.config/opencode/opencode.json /home/workspace/.config/opencode/\n\
+chown -R abc:abc /home/workspace/.cache /home/workspace/.config\n\
+if [ ! -s /home/workspace/.zshrc ]; then\n\
+  echo "# Workstation Lite Zsh Config" > /home/workspace/.zshrc\n\
+fi\n\
+touch /home/workspace/.zsh_history\n\
+chown abc:abc /home/workspace/.zshrc /home/workspace/.zsh_history\n\
+# Propagate injected GCP env vars (idempotent)\n\
+echo "export GOOGLE_CLOUD_PROJECT=$(with-contenv bash -c "echo \$GOOGLE_CLOUD_PROJECT")" > /etc/zsh/zshrc.gcp\n\
+echo "export GOOGLE_APPLICATION_CREDENTIALS=$(with-contenv bash -c "echo \$GOOGLE_APPLICATION_CREDENTIALS")" >> /etc/zsh/zshrc.gcp\n\
+# Recursively fix insecure directories for ZSH compinit\n\
+chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom\n\
+chmod g-w,o-w /home/workspace\n' > /etc/cont-init.d/99-setup-user && \
+    chmod +x /etc/cont-init.d/99-setup-user
+
+# Crucial: Must be root for S6 init to start. 
+USER root
+ENV HOME=/home/workspace
+WORKDIR /home/workspace
