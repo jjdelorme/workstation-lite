@@ -158,7 +158,7 @@ class K8sManager:
         tolerations = None
         if gpu:
             resource_limits["nvidia.com/gpu"] = "1"
-            node_selector = {"cloud.google.com/gke-accelerator": "nvidia-tesla-l4"}
+            node_selector = {"cloud.google.com/gke-accelerator": gpu}
             tolerations = [
                 client.V1Toleration(
                     key="nvidia.com/gpu",
