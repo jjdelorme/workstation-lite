@@ -50,16 +50,11 @@ uvicorn app.main:app --reload --port 8080
 ```bash
 cd frontend
 npm install
-npm run dev          # Dev server with HMR (proxies /api to localhost:8080)
-npm run build        # Production build (tsc -b && vite build)
-npm run lint         # ESLint
+npm run lint         # Run linter
+npm run build        # Production build (tsc -b && vite build) -> outputs to backend/app/static/
 ```
 
-**Important:** The backend serves the frontend from `backend/app/static/`, not from `frontend/dist/`. After rebuilding the frontend, copy the output to the backend:
-```bash
-rm -rf backend/app/static && cp -r frontend/dist backend/app/static
-```
-This allows you to update the UI without restarting the backend server — just refresh the browser.
+**Note:** The frontend is configured to build directly into `backend/app/static/`. The FastAPI backend serves these files automatically. After building the frontend, you can simply refresh the browser while the backend is running to see the changes.
 
 ### Tests
 ```bash
