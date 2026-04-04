@@ -19,6 +19,7 @@ def test_save_ssh_key_create(mock_k8s_client):
     mock_core.read_namespaced_secret.side_effect = Exception("Not Found")
     
     ssh_key = "test-ssh-key"
+    expected_key = ssh_key + "\n"
     manager.save_ssh_key("user-1", ssh_key)
     
     assert mock_core.create_namespaced_secret.called
@@ -26,7 +27,7 @@ def test_save_ssh_key_create(mock_k8s_client):
     assert kwargs['namespace'] == "user-1"
     secret = kwargs['body']
     assert secret.metadata.name == "ssh-key-secret"
-    assert secret.data["id_rsa"] == base64.b64encode(ssh_key.encode()).decode()
+    assert secret.data["id_rsa"] == base64.b64encode(expected_key.encode()).decode()
 
 def test_save_ssh_key_update(mock_k8s_client):
     mock_core, _ = mock_k8s_client
@@ -36,13 +37,14 @@ def test_save_ssh_key_update(mock_k8s_client):
     mock_core.read_namespaced_secret.return_value = MagicMock()
     
     ssh_key = "new-ssh-key"
+    expected_key = ssh_key + "\n"
     manager.save_ssh_key("user-1", ssh_key)
     
     assert mock_core.replace_namespaced_secret.called
     kwargs = mock_core.replace_namespaced_secret.call_args[1]
     assert kwargs['name'] == "ssh-key-secret"
     secret = kwargs['body']
-    assert secret.data["id_rsa"] == base64.b64encode(ssh_key.encode()).decode()
+    assert secret.data["id_rsa"] == base64.b64encode(expected_key.encode()).decode()
 
 def test_check_ssh_key_exists(mock_k8s_client):
     mock_core, _ = mock_k8s_client
@@ -70,11 +72,15 @@ def test_apply_statefulset_ssh_mount(mock_k8s_client):
     sts = mock_apps.create_namespaced_stateful_set.call_args[1]['body']
     pod_spec = sts.spec.template.spec
     
-    # Check volume mount
-    container = pod_spec.containers[0]
-    ssh_mount = next(m for m in container.volume_mounts if m.name == "ssh-key")
-    assert ssh_mount.mount_path == "/home/workspace/.ssh"
+    # Check volume mount in init container
+    init_container = pod_spec.init_containers[0]
+    ssh_mount = next(m for m in init_container.volume_mounts if m.name == "ssh-key")
+    assert ssh_mount.mount_path == "/tmp/ssh-secret"
     assert ssh_mount.read_only is True
+    
+    # Ensure it's NOT in the main container (we copy it instead of mounting it directly)
+    container = pod_spec.containers[0]
+    assert not any(m.name == "ssh-key" for m in container.volume_mounts)
     
     # Check volume
     ssh_vol = next(v for v in pod_spec.volumes if v.name == "ssh-key")

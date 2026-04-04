@@ -15,8 +15,8 @@ class WorkstationResponse(BaseModel):
     status: WorkstationStatus
     image: Optional[str] = None
     ports: list[int] = []
-    cpu: str = "500m"
-    memory: str = "2Gi"
+    cpu: str = "2000m"
+    memory: str = "8Gi"
     disk_size: str = "10Gi"
     gpu: Optional[str] = None
     use_spot: bool = False
@@ -40,8 +40,8 @@ class BuildRequest(BaseModel):
 class SaveConfigRequest(BaseModel):
     image: Optional[str] = None
     ports: Optional[list[int]] = []
-    cpu: Optional[str] = "500m"
-    memory: Optional[str] = "2Gi"
+    cpu: Optional[str] = "2000m"
+    memory: Optional[str] = "8Gi"
     disk_size: Optional[str] = "10Gi"
     gpu: Optional[str] = None
     use_spot: Optional[bool] = False

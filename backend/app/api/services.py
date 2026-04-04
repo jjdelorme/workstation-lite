@@ -54,8 +54,8 @@ def list_all_services(user_ns: str):
                 image=s.get("image"),
                 service_type=config.get("service_type", "custom"),
                 ports=ports,
-                cpu=config.get("cpu", "250m"),
-                memory=config.get("memory", "512Mi"),
+                cpu=config.get("cpu", "2000m"),
+                memory=config.get("memory", "8Gi"),
                 disk_size=config.get("disk_size", "5Gi"),
                 env_vars=config.get("env_vars", {}),
                 data_mount_path=config.get("data_mount_path", "/data"),
@@ -76,8 +76,8 @@ def save_service_config_endpoint(user_ns: str, name: str, req: SaveServiceConfig
 
         image = req.image if req.image else current_config.get("image")
         ports = req.ports if req.ports is not None else current_config.get("ports", [])
-        cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "250m")
-        memory = req.memory if req.memory is not None else current_config.get("memory", "512Mi")
+        cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "2000m")
+        memory = req.memory if req.memory is not None else current_config.get("memory", "8Gi")
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "5Gi")
         env_vars = req.env_vars if req.env_vars is not None else current_config.get("env_vars", {})
         data_mount_path = req.data_mount_path if req.data_mount_path is not None else current_config.get("data_mount_path", "/data")
@@ -105,8 +105,8 @@ def start_service(user_ns: str, name: str):
             raise HTTPException(status_code=400, detail="No image configured for this service")
 
         ports = config.get("ports", [])
-        cpu = config.get("cpu", "250m")
-        memory = config.get("memory", "512Mi")
+        cpu = config.get("cpu", "2000m")
+        memory = config.get("memory", "8Gi")
         disk_size = config.get("disk_size", "5Gi")
         env_vars = config.get("env_vars", {})
         data_mount_path = config.get("data_mount_path", "/data")

@@ -72,8 +72,8 @@ class SaveServiceConfigRequest(BaseModel):
     image: Optional[str] = None
     service_type: str = "custom"
     ports: Optional[list[int]] = None
-    cpu: Optional[str] = "250m"
-    memory: Optional[str] = "512Mi"
+    cpu: Optional[str] = "2000m"
+    memory: Optional[str] = "8Gi"
     disk_size: Optional[str] = "5Gi"
     env_vars: Optional[dict[str, str]] = None
     data_mount_path: Optional[str] = None
@@ -87,8 +87,8 @@ class ServiceResponse(BaseModel):
     image: Optional[str] = None
     service_type: str = "custom"
     ports: list[int] = []
-    cpu: str = "250m"
-    memory: str = "512Mi"
+    cpu: str = "2000m"
+    memory: str = "8Gi"
     disk_size: str = "5Gi"
     env_vars: dict[str, str] = {}
     data_mount_path: str = "/data"

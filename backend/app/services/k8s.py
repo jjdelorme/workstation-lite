@@ -140,7 +140,7 @@ class K8sManager:
                 logger.error(f"Failed to create PVC {name} in {user_ns}: {e}")
 
     def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None,
-                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None, use_spot: bool = False,
+                          cpu: str = "2000m", memory: str = "8Gi", gpu: str = None, use_spot: bool = False,
                           env_vars: dict = None, run_as_root: bool = False):
         if ports is None:
             ports = []
@@ -182,7 +182,6 @@ class K8sManager:
         volume_mounts = [
             client.V1VolumeMount(name="home", mount_path="/home/workspace"),
             client.V1VolumeMount(name="gcp-adc", mount_path="/var/secrets/google", read_only=True),
-            client.V1VolumeMount(name="ssh-key", mount_path="/home/workspace/.ssh", read_only=True),
         ]
         volumes = [
             client.V1Volume(
@@ -210,6 +209,19 @@ class K8sManager:
         from app.core.config import settings
         uid = "0" if run_as_root else "1000"
         gid = "0" if run_as_root else "1000"
+
+        # Robust provisioning step:
+        # 1. Ensure home directory ownership (essential for GKE PVCs)
+        # 2. Prepare .ssh directory with 700 permissions
+        # 3. Copy id_rsa from Secret mount with 600 permissions and correct ownership
+        # 4. CRITICAL: Ensure trailing newline exists (OpenSSH is picky)
+        init_command = f"chown {uid}:{gid} /home/workspace"
+        init_command += f" && mkdir -p /home/workspace/.ssh && chmod 700 /home/workspace/.ssh"
+        init_command += f" && if [ -f /tmp/ssh-secret/id_rsa ]; then cp /tmp/ssh-secret/id_rsa /home/workspace/.ssh/id_rsa; fi"
+        init_command += f" && if [ -f /home/workspace/.ssh/id_rsa ]; then [ -n \"$(tail -c1 /home/workspace/.ssh/id_rsa)\" ] && echo >> /home/workspace/.ssh/id_rsa; fi"
+        init_command += f" && if [ -f /home/workspace/.ssh/id_rsa ]; then chmod 600 /home/workspace/.ssh/id_rsa && chown {uid}:{gid} /home/workspace/.ssh/id_rsa; fi"
+        init_command += f" && chown -R {uid}:{gid} /home/workspace/.ssh"
+
         env_list = [
             client.V1EnvVar(name="PUID", value=uid),
             client.V1EnvVar(name="PGID", value=gid),
@@ -251,12 +263,13 @@ class K8sManager:
                             client.V1Container(
                                 name="fix-permissions",
                                 image="busybox",
-                                command=["sh", "-c", f"chown -R {uid}:{gid} /home/workspace"],
+                                command=["sh", "-c", init_command],
                                 security_context=client.V1SecurityContext(
                                     run_as_user=0
                                 ),
                                 volume_mounts=[
-                                    client.V1VolumeMount(name="home", mount_path="/home/workspace")
+                                    client.V1VolumeMount(name="home", mount_path="/home/workspace"),
+                                    client.V1VolumeMount(name="ssh-key", mount_path="/tmp/ssh-secret", read_only=True),
                                 ]
                             )
                         ],
@@ -515,7 +528,7 @@ class K8sManager:
                 logger.error(f"Failed to delete config for {workstation_name} in {user_ns}: {e}")
 
     def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None,
-                                cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None,
+                                cpu: str = "2000m", memory: str = "8Gi", disk_size: str = "10Gi", gpu: str = None,
                                 use_spot: bool = False, env_vars: dict = None, run_as_root: bool = False):
         if ports is None:
             ports = []
@@ -551,7 +564,7 @@ class K8sManager:
 
     def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
         self._refresh_config()
-        default_config = {"image": None, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "use_spot": False, "env_vars": {}, "run_as_root": False}
+        default_config = {"image": None, "ports": [], "cpu": "2000m", "memory": "8Gi", "disk_size": "10Gi", "gpu": None, "use_spot": False, "env_vars": {}, "run_as_root": False}
         if not self.core_api: return default_config
         cm_name = "workstation-configs"
         try:
@@ -565,8 +578,8 @@ class K8sManager:
                 return {
                     "image": parsed.get("image"),
                     "ports": parsed.get("ports", []),
-                    "cpu": parsed.get("cpu", "500m"),
-                    "memory": parsed.get("memory", "2Gi"),
+                    "cpu": parsed.get("cpu", "2000m"),
+                    "memory": parsed.get("memory", "8Gi"),
                     "disk_size": parsed.get("disk_size", "10Gi"),
                     "gpu": parsed.get("gpu"),
                     "use_spot": parsed.get("use_spot", False),
@@ -575,7 +588,7 @@ class K8sManager:
                 }
             except json.JSONDecodeError:
                 # Backwards compatibility for old config format
-                return {"image": val, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "use_spot": False, "env_vars": {}, "run_as_root": False}
+                return {"image": val, "ports": [], "cpu": "2000m", "memory": "8Gi", "disk_size": "10Gi", "gpu": None, "use_spot": False, "env_vars": {}, "run_as_root": False}
         except Exception:
             return default_config
 
@@ -653,6 +666,11 @@ class K8sManager:
         if not self.core_api: return
         import base64
 
+        # Ensure SSH key ends with a newline. 
+        # OpenSSH is extremely picky and often requires a newline after the END delimiter.
+        if ssh_key:
+            ssh_key = ssh_key.strip() + "\n"
+
         secret = client.V1Secret(
             metadata=client.V1ObjectMeta(name="ssh-key-secret"),
             type="Opaque",
@@ -708,7 +726,7 @@ class K8sManager:
     # ── Service (non-workstation pod) operations ──────────────────────────
 
     def apply_service_statefulset(self, user_ns: str, name: str, image: str, replicas: int,
-                                  ports: list[int] = None, cpu: str = "250m", memory: str = "512Mi",
+                                  ports: list[int] = None, cpu: str = "2000m", memory: str = "8Gi",
                                   env_vars: dict = None, data_mount_path: str = "/data",
                                   health_check_command: list[str] = None):
         """Create or update a StatefulSet for a service pod (database, cache, etc.)."""
@@ -910,7 +928,7 @@ class K8sManager:
             return []
 
     def save_service_config(self, user_ns: str, service_name: str, image: str, service_type: str = "custom",
-                            ports: list[int] = None, cpu: str = "250m", memory: str = "512Mi",
+                            ports: list[int] = None, cpu: str = "2000m", memory: str = "8Gi",
                             disk_size: str = "5Gi", env_vars: dict = None,
                             data_mount_path: str = "/data", health_check_command: list[str] = None):
         if ports is None:
@@ -947,7 +965,7 @@ class K8sManager:
         self._refresh_config()
         default_config = {
             "image": None, "service_type": "custom", "ports": [],
-            "cpu": "250m", "memory": "512Mi", "disk_size": "5Gi", "env_vars": {},
+            "cpu": "2000m", "memory": "8Gi", "disk_size": "5Gi", "env_vars": {},
             "data_mount_path": "/data", "health_check_command": [],
         }
         if not self.core_api:
@@ -964,8 +982,8 @@ class K8sManager:
                 "image": parsed.get("image"),
                 "service_type": parsed.get("service_type", "custom"),
                 "ports": parsed.get("ports", []),
-                "cpu": parsed.get("cpu", "250m"),
-                "memory": parsed.get("memory", "512Mi"),
+                "cpu": parsed.get("cpu", "2000m"),
+                "memory": parsed.get("memory", "8Gi"),
                 "disk_size": parsed.get("disk_size", "5Gi"),
                 "env_vars": parsed.get("env_vars", {}),
                 "data_mount_path": parsed.get("data_mount_path", "/data"),

@@ -26,8 +26,8 @@ interface EditServiceDialogProps {
 
 const EditServiceDialog: React.FC<EditServiceDialogProps> = ({ open, onClose, onConfirm, service }) => {
   const [portsStr, setPortsStr] = useState('');
-  const [cpu, setCpu] = useState('250m');
-  const [memory, setMemory] = useState('512Mi');
+  const [cpu, setCpu] = useState('2000m');
+  const [memory, setMemory] = useState('8Gi');
   const [diskSize, setDiskSize] = useState('5Gi');
   const [dataMountPath, setDataMountPath] = useState('/data');
   const [healthCheckCmd, setHealthCheckCmd] = useState('');
@@ -36,8 +36,8 @@ const EditServiceDialog: React.FC<EditServiceDialogProps> = ({ open, onClose, on
   useEffect(() => {
     if (service) {
       setPortsStr(service.ports?.join(', ') || '');
-      setCpu(service.cpu || '250m');
-      setMemory(service.memory || '512Mi');
+      setCpu(service.cpu || '2000m');
+      setMemory(service.memory || '8Gi');
       setDiskSize(service.disk_size || '5Gi');
       setDataMountPath(service.data_mount_path || '/data');
       setHealthCheckCmd(service.health_check_command?.join(' ') || '');

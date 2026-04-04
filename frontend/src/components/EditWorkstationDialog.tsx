@@ -28,8 +28,8 @@ interface EditWorkstationDialogProps {
 const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onClose, onConfirm, workstation, availableImages }) => {
   const [selectedImage, setSelectedImage] = useState(workstation?.image || '');
   const [portsStr, setPortsStr] = useState(workstation?.ports?.join(', ') || '');
-  const [cpu, setCpu] = useState(workstation?.cpu || '500m');
-  const [memory, setMemory] = useState(workstation?.memory || '2Gi');
+  const [cpu, setCpu] = useState(workstation?.cpu || '2000m');
+  const [memory, setMemory] = useState(workstation?.memory || '8Gi');
   const [diskSize, setDiskSize] = useState(workstation?.disk_size || '10Gi');
   const [gpuEnabled, setGpuEnabled] = useState(!!workstation?.gpu);
   const [useSpot, setUseSpot] = useState(workstation?.use_spot || false);

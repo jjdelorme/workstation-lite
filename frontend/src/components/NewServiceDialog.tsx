@@ -27,8 +27,8 @@ const NewServiceDialog: React.FC<NewServiceDialogProps> = ({ open, onClose, onCo
   const [selectedType, setSelectedType] = useState('');
   const [image, setImage] = useState('');
   const [portsStr, setPortsStr] = useState('');
-  const [cpu, setCpu] = useState('250m');
-  const [memory, setMemory] = useState('512Mi');
+  const [cpu, setCpu] = useState('2000m');
+  const [memory, setMemory] = useState('8Gi');
   const [diskSize, setDiskSize] = useState('5Gi');
   const [dataMountPath, setDataMountPath] = useState('/data');
   const [healthCheckCmd, setHealthCheckCmd] = useState('');
@@ -73,8 +73,8 @@ const NewServiceDialog: React.FC<NewServiceDialogProps> = ({ open, onClose, onCo
     setSelectedType('');
     setImage('');
     setPortsStr('');
-    setCpu('250m');
-    setMemory('512Mi');
+    setCpu('2000m');
+    setMemory('8Gi');
     setDiskSize('5Gi');
     setDataMountPath('/data');
     setHealthCheckCmd('');

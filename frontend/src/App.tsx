@@ -732,7 +732,7 @@ function App() {
                           Image: {ws.image?.split('/').pop()?.split('@')[0]}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontFamily: 'monospace' }}>
-                          CPU: {ws.cpu || '500m'} | Mem: {ws.memory || '2Gi'} | Disk: {ws.disk_size || '10Gi'}
+                          CPU: {ws.cpu || '2000m'} | Mem: {ws.memory || '8Gi'} | Disk: {ws.disk_size || '10Gi'}
                         </Typography>
 
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
@@ -790,8 +790,8 @@ function App() {
                                 name: ws.name,
                                 image: ws.image,
                                 ports: ws.ports || [],
-                                cpu: ws.cpu || '500m',
-                                memory: ws.memory || '2Gi',
+                                cpu: ws.cpu || '2000m',
+                                memory: ws.memory || '8Gi',
                                 disk_size: ws.disk_size || '10Gi',
                                 gpu: ws.gpu ?? null,
                                 use_spot: ws.use_spot || false,
@@ -915,8 +915,7 @@ function App() {
                             Image: {svc.image}
                           </Typography>
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
-                            CPU: {svc.cpu || '250m'} | Mem: {svc.memory || '512Mi'} | Disk: {svc.disk_size || '5Gi'}
-                          </Typography>
+                            CPU: {svc.cpu || '2000m'} | Mem: {svc.memory || '8Gi'} | Disk: {svc.disk_size || '5Gi'}                          </Typography>
 
                           {connectStr && svc.status === 'RUNNING' && (
                             <Paper sx={{ p: 1.5, mt: 1, bgcolor: '#f5f5f5' }} elevation={1}>
@@ -989,8 +988,8 @@ function App() {
                                   image: svc.image,
                                   service_type: svc.service_type || 'custom',
                                   ports: svc.ports || [],
-                                  cpu: svc.cpu || '250m',
-                                  memory: svc.memory || '512Mi',
+                                  cpu: svc.cpu || '2000m',
+                                  memory: svc.memory || '8Gi',
                                   disk_size: svc.disk_size || '5Gi',
                                   env_vars: svc.env_vars || {},
                                   data_mount_path: svc.data_mount_path || '/data',

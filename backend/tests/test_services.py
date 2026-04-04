@@ -52,7 +52,7 @@ def test_apply_service_statefulset(mock_k8s_client):
 
     manager.apply_service_statefulset(
         "user-1", "my-postgres", "postgres:16", 1,
-        ports=[5432], cpu="250m", memory="512Mi",
+        ports=[5432], cpu="2000m", memory="8Gi",
         data_mount_path="/var/lib/postgresql/data",
         health_check_command=["pg_isready"],
     )
@@ -124,7 +124,7 @@ def test_get_service_config(mock_k8s_client):
     mock_cm = MagicMock()
     mock_cm.data = {"my-postgres": json.dumps({
         "image": "postgres:16", "service_type": "postgresql",
-        "ports": [5432], "cpu": "250m", "memory": "512Mi",
+        "ports": [5432], "cpu": "2000m", "memory": "8Gi",
         "disk_size": "5Gi", "env_vars": {"POSTGRES_PASSWORD": "secret"},
         "data_mount_path": "/var/lib/postgresql/data",
         "health_check_command": ["pg_isready"],
@@ -147,7 +147,7 @@ def test_get_service_config_default(mock_k8s_client):
 
     config = manager.get_service_config("user-1", "nonexistent")
     assert config["image"] is None
-    assert config["cpu"] == "250m"
+    assert config["cpu"] == "2000m"
     assert config["data_mount_path"] == "/data"
     assert config["health_check_command"] == []
 
@@ -302,7 +302,7 @@ def test_save_service_config_api(mock_get_k8s):
     mock_get_k8s.return_value = mock_k8s
     mock_k8s.get_service_config.return_value = {
         "image": None, "service_type": "custom", "ports": [],
-        "cpu": "250m", "memory": "512Mi", "disk_size": "5Gi", "env_vars": {},
+        "cpu": "2000m", "memory": "8Gi", "disk_size": "5Gi", "env_vars": {},
         "data_mount_path": "/data", "health_check_command": [],
     }
 
@@ -352,7 +352,7 @@ def test_connect_script_api(mock_settings, mock_get_k8s):
     mock_get_k8s.return_value = mock_k8s
     mock_k8s.get_service_config.return_value = {
         "image": "postgres:16", "service_type": "postgresql",
-        "ports": [5432], "cpu": "250m", "memory": "512Mi",
+        "ports": [5432], "cpu": "2000m", "memory": "8Gi",
         "disk_size": "5Gi", "env_vars": {},
         "data_mount_path": "/var/lib/postgresql/data",
         "health_check_command": ["pg_isready"],

@@ -23,8 +23,8 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
   const [name, setName] = useState('');
   const [selectedImage, setSelectedImage] = useState('');
   const [portsStr, setPortsStr] = useState('');
-  const [cpu, setCpu] = useState('500m');
-  const [memory, setMemory] = useState('2Gi');
+  const [cpu, setCpu] = useState('2000m');
+  const [memory, setMemory] = useState('8Gi');
   const [diskSize, setDiskSize] = useState('10Gi');
   const [gpuEnabled, setGpuEnabled] = useState(false);
   const [useSpot, setUseSpot] = useState(false);
@@ -51,8 +51,8 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
       setName('');
       setSelectedImage('');
       setPortsStr('');
-      setCpu('500m');
-      setMemory('2Gi');
+      setCpu('2000m');
+      setMemory('8Gi');
       setDiskSize('10Gi');
       setGpuEnabled(false);
       setUseSpot(false);

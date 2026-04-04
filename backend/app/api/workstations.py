@@ -354,8 +354,8 @@ def save_workstation_config_endpoint(user_ns: str, name: str, req: SaveConfigReq
         current_config = get_k8s_manager().get_workstation_config(user_ns, name)
         image = req.image if req.image else current_config.get("image")
         ports = req.ports if req.ports is not None else current_config.get("ports", [])
-        cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "500m")
-        memory = req.memory if req.memory is not None else current_config.get("memory", "2Gi")
+        cpu = req.cpu if req.cpu is not None else current_config.get("cpu", "2000m")
+        memory = req.memory if req.memory is not None else current_config.get("memory", "8Gi")
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "10Gi")
         gpu = req.gpu if req.gpu is not None else current_config.get("gpu")
         use_spot = req.use_spot if req.use_spot is not None else current_config.get("use_spot", False)
@@ -380,8 +380,8 @@ def list_all_workstations(user_ns: str):
                 status=WorkstationStatus(w["status"]),
                 image=w.get("image"),
                 ports=ports,
-                cpu=config.get("cpu", "500m"),
-                memory=config.get("memory", "2Gi"),
+                cpu=config.get("cpu", "2000m"),
+                memory=config.get("memory", "8Gi"),
                 disk_size=config.get("disk_size", "10Gi"),
                 gpu=config.get("gpu"),
                 use_spot=config.get("use_spot", False),
@@ -403,8 +403,8 @@ def start_named_workstation(user_ns: str, name: str):
         config = get_k8s_manager().get_workstation_config(user_ns, name)
         custom_image = config.get("image") if isinstance(config, dict) else config
         ports = config.get("ports", []) if isinstance(config, dict) else []
-        cpu = config.get("cpu", "500m")
-        memory = config.get("memory", "2Gi")
+        cpu = config.get("cpu", "2000m")
+        memory = config.get("memory", "8Gi")
         disk_size = config.get("disk_size", "10Gi")
         gpu = config.get("gpu")
         use_spot = config.get("use_spot", False)
