@@ -24,48 +24,48 @@ RUN mkdir -p /opt/google-cloud-sdk && \
     rm google-cloud-cli-linux-x86_64.tar.gz && \
     /opt/google-cloud-sdk/install.sh --quiet
 
-ENV PATH=$PATH:/opt/google-cloud-sdk/bin:$HOME/.local/bin
-ENV GOOGLE_CLOUD_LOCATION=global
-ENV GOOGLE_CLOUD_PROJECT="" 
-ENV CLAUDE_CODE_USE_VERTEX=1
-
-# 4. Global Tool Locations
+# 4. Global Tool Locations & Environment
 ENV NVM_DIR=/opt/nvm
 ENV OH_MY_ZSH=/opt/oh-my-zsh
 ENV ZSH_CUSTOM=/opt/oh-my-zsh-custom
 ENV ZSH_DISABLE_COMPFIX=true
+# Pre-set PATH for build layers to find gcloud
+ENV PATH=/opt/google-cloud-sdk/bin:$PATH
+ENV CLAUDE_CODE_USE_VERTEX=1
 
-# 5. Install NVM, Node, npm, Gemini CLI, Oh My Zsh, and P10k into /opt
+# 5. Install NVM, Node, npm, Gemini CLI, Oh My Zsh, and P10k
 RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
     bash -c "source $NVM_DIR/nvm.sh && \
              nvm install 20 && \
              nvm alias default 20 && \
-             npm install -g @google/gemini-cli" && \
+             npm install -g @google/gemini-cli @anthropic-ai/claude-code" && \
     git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
-# 6. Install Claude Code
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# 6. Global Symlinks (Ensures tools are found regardless of shell login type)
+RUN ln -s $(bash -c "source $NVM_DIR/nvm.sh && which node") /usr/local/bin/node && \
+    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which npm") /usr/local/bin/npm && \
+    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which gemini") /usr/local/bin/gemini && \
+    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which claude") /usr/local/bin/claude
 
 # 7. Download a lean default Powerlevel10k config
-# This prevents the prompt from hanging headless while waiting for the config wizard!
 RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
 
 # 8. Create Global ZSH and Tmux Configurations (PVC Proof)
-# Writing to /etc/zsh/zshrc ensures OMZ/P10K run even if a PVC overwrites /home/workspace
 RUN mkdir -p /etc/zsh && \
     echo 'export LANG=en_US.UTF-8' >> /etc/zsh/zshrc && \
     echo 'export LC_ALL=en_US.UTF-8' >> /etc/zsh/zshrc && \
+    echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
+    echo 'zsh-newuser-install() { :; }' >> /etc/zsh/zshrc && \
+    echo 'export PATH=$PATH:/opt/google-cloud-sdk/bin' >> /etc/zsh/zshrc && \
     echo '[[ -z "$TMUX" ]] && export TERM=xterm-256color' >> /etc/zsh/zshrc && \
     echo 'export ZSH="/opt/oh-my-zsh"' >> /etc/zsh/zshrc && \
     echo 'export ZSH_CUSTOM="/opt/oh-my-zsh-custom"' >> /etc/zsh/zshrc && \
-    echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
     echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> /etc/zsh/zshrc && \
     echo 'source $ZSH/oh-my-zsh.sh' >> /etc/zsh/zshrc && \
     echo 'export NVM_DIR="/opt/nvm"' >> /etc/zsh/zshrc && \
     echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> /etc/zsh/zshrc && \
-    echo 'export GOOGLE_CLOUD_LOCATION=global' >> /etc/zsh/zshrc && \
     echo 'export CLAUDE_CODE_USE_VERTEX=1' >> /etc/zsh/zshrc && \
     echo '[[ ! -f ~/.p10k.zsh ]] && cp /etc/skel/.p10k.zsh ~/.p10k.zsh' >> /etc/zsh/zshrc && \
     echo 'source ~/.p10k.zsh' >> /etc/zsh/zshrc
@@ -88,13 +88,19 @@ RUN usermod -d /home/workspace -m abc && \
 
 # 11. Runtime Initialization Script
 # Ensures home dir and dotfiles are owned by abc when a PVC overmounts /home/workspace
+# Also propagates GCP environment variables that would otherwise be stripped by 'su -l'
 RUN mkdir -p /etc/cont-init.d && \
     printf "#!/with-contenv bash\n\
 chown abc:abc /home/workspace\n\
 mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc\n\
 chown -R abc:abc /home/workspace/.cache\n\
-touch /home/workspace/.zsh_history\n\
-chown abc:abc /home/workspace/.zsh_history\n" > /etc/cont-init.d/99-setup-user && \
+touch /home/workspace/.zshrc /home/workspace/.zsh_history\n\
+chown abc:abc /home/workspace/.zshrc /home/workspace/.zsh_history\n\
+# Propagate injected GCP env vars to all user sessions\n\
+echo \"export GOOGLE_CLOUD_PROJECT=\$GOOGLE_CLOUD_PROJECT\" >> /etc/zsh/zshrc\n\
+echo \"export GOOGLE_APPLICATION_CREDENTIALS=\$GOOGLE_APPLICATION_CREDENTIALS\" >> /etc/zsh/zshrc\n\
+# Automatically fix insecure directories that trigger ZSH compinit warnings\n\
+chmod g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh/cache /home/workspace\n" > /etc/cont-init.d/99-setup-user && \
     chmod +x /etc/cont-init.d/99-setup-user
 
 # Crucial: Must be root for S6 init to start. 
