@@ -109,6 +109,8 @@ echo "export GOOGLE_APPLICATION_CREDENTIALS=$(with-contenv bash -c "echo \$GOOGL
 if [ -f "\$GOOGLE_APPLICATION_CREDENTIALS" ]; then\n\
   su -s /bin/bash abc -c "/opt/google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=\$GOOGLE_APPLICATION_CREDENTIALS --quiet" 2>/dev/null || true\n\
 fi\n\
+# Fix ownership of zsh dirs to match runtime abc UID (build-time UID may differ)\n\
+chown -R abc:abc /opt/oh-my-zsh /opt/oh-my-zsh-custom /opt/nvm\n\
 # Recursively fix insecure directories for ZSH compinit\n\
 chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom\n\
 chmod g-w,o-w /home/workspace\n' > /etc/cont-init.d/99-setup-user && \
