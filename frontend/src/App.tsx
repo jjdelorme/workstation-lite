@@ -26,6 +26,7 @@ interface WorkstationStatus {
   memory?: string;
   disk_size?: string;
   gpu?: string | null;
+  use_spot?: boolean;
   run_as_root: boolean;
   env_vars?: Record<string, string>;
   pod_name?: string;
@@ -334,13 +335,13 @@ function App() {
     }
   };
 
-  const handleCreateWorkstation = async (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string> = {}, runAsRoot: boolean = false) => {
+  const handleCreateWorkstation = async (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, useSpot: boolean, envVars: Record<string, string> = {}, runAsRoot: boolean = false) => {
     setNotification({ type: 'info', msg: `Creating workstation ${name}...` });
     try {
       const saveResponse = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageUri, ports, cpu, memory, disk_size: diskSize, gpu, env_vars: envVars, run_as_root: runAsRoot }),
+        body: JSON.stringify({ image: imageUri, ports, cpu, memory, disk_size: diskSize, gpu, use_spot: useSpot, env_vars: envVars, run_as_root: runAsRoot }),
       });
 
       if (saveResponse.ok) {
@@ -354,10 +355,10 @@ function App() {
     }
   };
 
-  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string> = {}, runAsRoot: boolean = false, image?: string) => {
+  const handleUpdateWorkstation = async (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, useSpot: boolean, envVars: Record<string, string> = {}, runAsRoot: boolean = false, image?: string) => {
     setNotification({ type: 'info', msg: `Updating configuration for ${name}...` });
     try {
-      const body: Record<string, unknown> = { ports, cpu, memory, disk_size: diskSize, gpu, env_vars: envVars, run_as_root: runAsRoot };
+      const body: Record<string, unknown> = { ports, cpu, memory, disk_size: diskSize, gpu, use_spot: useSpot, env_vars: envVars, run_as_root: runAsRoot };
       if (image) body.image = image;
       const response = await fetch(`/api/workstations/${user_ns}/save-config/${name}`, {
         method: 'POST',
@@ -748,8 +749,10 @@ function App() {
                                 cpu: ws.cpu || '500m',
                                 memory: ws.memory || '2Gi',
                                 disk_size: ws.disk_size || '10Gi',
-                                gpu: ws.gpu || null,
+                                gpu: ws.gpu ?? null,
+                                use_spot: ws.use_spot || false,
                                 run_as_root: ws.run_as_root || false,
+
                                 env_vars: ws.env_vars || {},
                               });
                               setIsEditDialogOpen(true);

@@ -15,7 +15,7 @@ export interface ImageMetadata {
 interface NewWorkstationDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>, runAsRoot: boolean) => void;
+  onConfirm: (name: string, imageUri: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, useSpot: boolean, envVars: Record<string, string>, runAsRoot: boolean) => void;
   availableImages: ImageMetadata[];
 }
 
@@ -27,6 +27,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
   const [memory, setMemory] = useState('2Gi');
   const [diskSize, setDiskSize] = useState('10Gi');
   const [gpuEnabled, setGpuEnabled] = useState(false);
+  const [useSpot, setUseSpot] = useState(false);
   const [runAsRoot, setRunAsRoot] = useState(false);
   const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>([]);
 
@@ -42,7 +43,8 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
         cpu,
         memory,
         diskSize,
-        gpuEnabled ? 'nvidia-tesla-l4' : null,
+        gpuEnabled ? 'nvidia-l4' : null,
+        useSpot,
         envVars,
         runAsRoot
       );
@@ -53,6 +55,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
       setMemory('2Gi');
       setDiskSize('10Gi');
       setGpuEnabled(false);
+      setUseSpot(false);
       setRunAsRoot(false);
       setEnvEntries([]);
       onClose();
@@ -149,6 +152,16 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
             {gpuEnabled && (
               <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
                 An NVIDIA L4 GPU will be attached. GKE Autopilot will provision a GPU node automatically (may take several minutes).
+              </Typography>
+            )}
+
+            <FormControlLabel
+              control={<Checkbox checked={useSpot} onChange={(e) => setUseSpot(e.target.checked)} />}
+              label="Use Spot Instance (80% cheaper)"
+            />
+            {useSpot && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
+                Spot instances are significantly cheaper but can be reclaimed by Google Cloud if capacity is needed elsewhere. vLLM will restart automatically.
               </Typography>
             )}
 

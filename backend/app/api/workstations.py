@@ -358,9 +358,10 @@ def save_workstation_config_endpoint(user_ns: str, name: str, req: SaveConfigReq
         memory = req.memory if req.memory is not None else current_config.get("memory", "2Gi")
         disk_size = req.disk_size if req.disk_size is not None else current_config.get("disk_size", "10Gi")
         gpu = req.gpu if req.gpu is not None else current_config.get("gpu")
+        use_spot = req.use_spot if req.use_spot is not None else current_config.get("use_spot", False)
         env_vars = req.env_vars if req.env_vars is not None else current_config.get("env_vars", {})
         run_as_root = req.run_as_root if req.run_as_root is not None else current_config.get("run_as_root", False)
-        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu, env_vars, run_as_root)
+        get_k8s_manager().save_workstation_config(user_ns, name, image, ports, cpu, memory, disk_size, gpu, use_spot, env_vars, run_as_root)
         return {"status": "ok", "message": f"Config for {name} saved"}
     except Exception as e:
         logger.error(f"Error saving config: {e}")
@@ -383,6 +384,7 @@ def list_all_workstations(user_ns: str):
                 memory=config.get("memory", "2Gi"),
                 disk_size=config.get("disk_size", "10Gi"),
                 gpu=config.get("gpu"),
+                use_spot=config.get("use_spot", False),
                 run_as_root=config.get("run_as_root", False),
                 env_vars=config.get("env_vars", {}),
                 pod_name=w.get("pod_name"),
@@ -405,6 +407,7 @@ def start_named_workstation(user_ns: str, name: str):
         memory = config.get("memory", "2Gi")
         disk_size = config.get("disk_size", "10Gi")
         gpu = config.get("gpu")
+        use_spot = config.get("use_spot", False)
         user_env_vars = config.get("env_vars", {}) if isinstance(config, dict) else {}
         run_as_root = config.get("run_as_root", False)
         final_image = custom_image if custom_image else settings.workstation_image
@@ -423,6 +426,7 @@ def start_named_workstation(user_ns: str, name: str):
             cpu=cpu,
             memory=memory,
             gpu=gpu,
+            use_spot=use_spot,
             env_vars=user_env_vars,
             run_as_root=run_as_root,
         )

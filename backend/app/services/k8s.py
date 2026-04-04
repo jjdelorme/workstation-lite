@@ -140,8 +140,8 @@ class K8sManager:
                 logger.error(f"Failed to create PVC {name} in {user_ns}: {e}")
 
     def apply_statefulset(self, user_ns: str, name: str, image: str, replicas: int, ports: list[int] = None,
-                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None, env_vars: dict = None,
-                          run_as_root: bool = False):
+                          cpu: str = "500m", memory: str = "2Gi", gpu: str = None, use_spot: bool = False,
+                          env_vars: dict = None, run_as_root: bool = False):
         if ports is None:
             ports = []
         self._refresh_config()
@@ -153,19 +153,30 @@ class K8sManager:
         resource_requests = {"cpu": cpu, "memory": memory}
         resource_limits = {}
 
-        # GPU support
-        node_selector = None
-        tolerations = None
+        # GPU and Spot support
+        node_selector = {}
+        tolerations = []
+        
         if gpu:
             resource_limits["nvidia.com/gpu"] = "1"
-            node_selector = {"cloud.google.com/gke-accelerator": gpu}
-            tolerations = [
+            # GKE Autopilot Accelerator class requirements
+            node_selector["cloud.google.com/compute-class"] = "Accelerator"
+            node_selector["cloud.google.com/gke-accelerator"] = gpu or "nvidia-l4"
+            tolerations.append(
                 client.V1Toleration(
                     key="nvidia.com/gpu",
                     operator="Exists",
                     effect="NoSchedule"
                 )
-            ]
+            )
+        
+        if use_spot:
+            node_selector["cloud.google.com/gke-spot"] = "true"
+
+        if not node_selector:
+            node_selector = None
+        if not tolerations:
+            tolerations = None
 
         # Volume mounts and volumes
         volume_mounts = [
@@ -496,7 +507,7 @@ class K8sManager:
 
     def save_workstation_config(self, user_ns: str, workstation_name: str, image: str, ports: list[int] = None,
                                 cpu: str = "500m", memory: str = "2Gi", disk_size: str = "10Gi", gpu: str = None,
-                                env_vars: dict = None, run_as_root: bool = False):
+                                use_spot: bool = False, env_vars: dict = None, run_as_root: bool = False):
         if ports is None:
             ports = []
         self._refresh_config()
@@ -510,6 +521,7 @@ class K8sManager:
             "memory": memory, 
             "disk_size": disk_size, 
             "gpu": gpu, 
+            "use_spot": use_spot,
             "env_vars": env_vars or {},
             "run_as_root": run_as_root
         })
@@ -530,7 +542,7 @@ class K8sManager:
 
     def get_workstation_config(self, user_ns: str, workstation_name: str) -> dict:
         self._refresh_config()
-        default_config = {"image": None, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}, "run_as_root": False}
+        default_config = {"image": None, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "use_spot": False, "env_vars": {}, "run_as_root": False}
         if not self.core_api: return default_config
         cm_name = "workstation-configs"
         try:
@@ -548,12 +560,13 @@ class K8sManager:
                     "memory": parsed.get("memory", "2Gi"),
                     "disk_size": parsed.get("disk_size", "10Gi"),
                     "gpu": parsed.get("gpu"),
+                    "use_spot": parsed.get("use_spot", False),
                     "env_vars": parsed.get("env_vars", {}),
                     "run_as_root": parsed.get("run_as_root", False),
                 }
             except json.JSONDecodeError:
                 # Backwards compatibility for old config format
-                return {"image": val, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "env_vars": {}, "run_as_root": False}
+                return {"image": val, "ports": [], "cpu": "500m", "memory": "2Gi", "disk_size": "10Gi", "gpu": None, "use_spot": False, "env_vars": {}, "run_as_root": False}
         except Exception:
             return default_config
 

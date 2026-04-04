@@ -12,6 +12,7 @@ export interface WorkstationConfig {
   memory: string;
   disk_size: string;
   gpu: string | null;
+  use_spot: boolean;
   run_as_root: boolean;
   env_vars: Record<string, string>;
 }
@@ -19,7 +20,7 @@ export interface WorkstationConfig {
 interface EditWorkstationDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, envVars: Record<string, string>, runAsRoot: boolean, image?: string) => void;
+  onConfirm: (name: string, ports: number[], cpu: string, memory: string, diskSize: string, gpu: string | null, useSpot: boolean, envVars: Record<string, string>, runAsRoot: boolean, image?: string) => void;
   workstation: WorkstationConfig | null;
   availableImages: ImageMetadata[];
 }
@@ -31,6 +32,7 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
   const [memory, setMemory] = useState(workstation?.memory || '2Gi');
   const [diskSize, setDiskSize] = useState(workstation?.disk_size || '10Gi');
   const [gpuEnabled, setGpuEnabled] = useState(!!workstation?.gpu);
+  const [useSpot, setUseSpot] = useState(workstation?.use_spot || false);
   const [runAsRoot, setRunAsRoot] = useState(workstation?.run_as_root || false);
   const [envEntries, setEnvEntries] = useState<{key: string, value: string}[]>(() => {
     const ev = workstation?.env_vars || {};
@@ -49,7 +51,8 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
         cpu,
         memory,
         diskSize,
-        gpuEnabled ? 'nvidia-tesla-l4' : null,
+        gpuEnabled ? 'nvidia-l4' : null,
+        useSpot,
         envVars,
         runAsRoot,
         imageChanged ? selectedImage : undefined
@@ -153,6 +156,16 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
             {gpuEnabled && (
               <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
                 An NVIDIA L4 GPU will be attached. GKE Autopilot will provision a GPU node automatically (may take several minutes).
+              </Typography>
+            )}
+
+            <FormControlLabel
+              control={<Checkbox checked={useSpot} onChange={(e) => setUseSpot(e.target.checked)} />}
+              label="Use Spot Instance (80% cheaper)"
+            />
+            {useSpot && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 4, mb: 1 }}>
+                Spot instances are significantly cheaper but can be reclaimed by Google Cloud if capacity is needed elsewhere. vLLM will restart automatically.
               </Typography>
             )}
 
