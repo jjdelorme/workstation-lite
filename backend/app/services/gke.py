@@ -1,6 +1,7 @@
 from google.cloud import container_v1
 from google.api_core import exceptions
 import logging
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,32 @@ class GKEManager:
             logger.error(f"Error getting cluster status: {e}")
             raise e
 
+    def _ensure_node_service_account_role(self, project_id: str):
+        """Grant the default Compute Engine service account the required
+        roles/container.defaultNodeServiceAccount role so that GKE nodes
+        have proper permissions for logging, monitoring, and HPA."""
+        try:
+            sa = f"{project_id}@developer.gserviceaccount.com"
+            # Fetch the project number from gcloud to build the full SA email
+            result = subprocess.run(
+                ["gcloud", "projects", "describe", project_id,
+                 "--format=value(projectNumber)"],
+                capture_output=True, text=True, check=True
+            )
+            project_number = result.stdout.strip()
+            sa = f"{project_number}-compute@developer.gserviceaccount.com"
+
+            subprocess.run(
+                ["gcloud", "projects", "add-iam-policy-binding", project_id,
+                 f"--member=serviceAccount:{sa}",
+                 "--role=roles/container.defaultNodeServiceAccount",
+                 "--condition=None"],
+                capture_output=True, text=True, check=True
+            )
+            logger.info(f"Granted roles/container.defaultNodeServiceAccount to {sa}")
+        except Exception as e:
+            logger.warning(f"Failed to grant node service account role: {e}")
+
     def create_autopilot_cluster(self, project_id: str, region: str, cluster_name: str):
         parent = f"projects/{project_id}/locations/{region}"
         cluster = container_v1.Cluster(
@@ -31,6 +58,7 @@ class GKEManager:
         try:
             # This is a long-running operation
             operation = self.client.create_cluster(request={"parent": parent, "cluster": cluster})
+            self._ensure_node_service_account_role(project_id)
             return operation
         except Exception as e:
             logger.error(f"Error creating autopilot cluster: {e}")

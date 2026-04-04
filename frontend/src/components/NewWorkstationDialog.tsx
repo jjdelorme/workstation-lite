@@ -42,7 +42,7 @@ const NewWorkstationDialog: React.FC<NewWorkstationDialogProps> = ({ open, onClo
         cpu,
         memory,
         diskSize,
-        gpuEnabled ? 'nvidia-l4' : null,
+        gpuEnabled ? 'nvidia-tesla-l4' : null,
         envVars,
         runAsRoot
       );

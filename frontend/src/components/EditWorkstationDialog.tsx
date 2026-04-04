@@ -49,7 +49,7 @@ const EditWorkstationDialog: React.FC<EditWorkstationDialogProps> = ({ open, onC
         cpu,
         memory,
         diskSize,
-        gpuEnabled ? 'nvidia-l4' : null,
+        gpuEnabled ? 'nvidia-tesla-l4' : null,
         envVars,
         runAsRoot,
         imageChanged ? selectedImage : undefined
