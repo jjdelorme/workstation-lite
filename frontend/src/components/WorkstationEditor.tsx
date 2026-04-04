@@ -8,11 +8,12 @@ interface WorkstationEditorProps {
   initialName?: string;
   onBuildSuccess?: () => void;
   onBuildStart?: () => void;
+  onReset?: () => void;
   initialBuildId?: string;
   initialBuildStatus?: string;
 }
 
-const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile, initialName, onBuildSuccess, onBuildStart, initialBuildId, initialBuildStatus }) => {
+const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile, initialName, onBuildSuccess, onBuildStart, onReset, initialBuildId, initialBuildStatus }) => {
   const [dockerfile, setDockerfile] = useState(initialDockerfile || DEFAULT_DOCKERFILE);
   const [name, setName] = useState(initialName || 'workstation');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', msg: string } | null>(null);
@@ -108,6 +109,7 @@ const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile
   const handleReset = () => {
     setDockerfile(DEFAULT_DOCKERFILE);
     setName('workstation');
+    if (onReset) onReset();
   };
 
   return (

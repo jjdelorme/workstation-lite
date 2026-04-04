@@ -1064,6 +1064,7 @@ function App() {
                     initialName={selectedImageName}
                     onBuildSuccess={fetchImages}
                     onBuildStart={fetchImages}
+                    onReset={() => { setSelectedDockerfile(undefined); setSelectedImageName(undefined); }}
                     initialBuildId={
                       selectedImageName
                         ? availableImages.find(img => img.tags?.[0] === selectedImageName)?.build_id ?? undefined
