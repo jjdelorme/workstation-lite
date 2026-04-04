@@ -508,6 +508,10 @@ def get_connect_script(user_ns: str, name: str, request: Request):
         config = get_k8s_manager().get_workstation_config(user_ns, name)
         ports = config.get("ports", []) if isinstance(config, dict) else []
         run_as_root = config.get("run_as_root", False) if isinstance(config, dict) else False
+        user_env_vars = config.get("env_vars", {}) if isinstance(config, dict) else {}
+        # Build whitelist of env vars to preserve through su -l (which resets env)
+        whitelist_vars = ["GOOGLE_CLOUD_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS", "CLAUDE_CODE_USE_VERTEX"] + list(user_env_vars.keys())
+        whitelist_str = ",".join(whitelist_vars)
 
         if ports:
             lsof_full = "lsof " + " ".join([f"-ti:{p}" for p in ports]) + " | xargs kill -9 2>/dev/null || true"
@@ -563,7 +567,7 @@ fi
 if [ "{run_as_root}" = "True" ]; then
     kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- $SHELL_BIN < /dev/tty
 else
-    kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- su -l abc -s $SHELL_BIN < /dev/tty
+    kubectl --token="$TOKEN" --server="https://$ENDPOINT" --insecure-skip-tls-verify exec -it pod/{name}-0 -n {user_ns} -- su -l abc -w {whitelist_str} -s $SHELL_BIN < /dev/tty
 fi
 """
         return script

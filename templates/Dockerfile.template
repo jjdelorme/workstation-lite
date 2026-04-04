@@ -86,7 +86,8 @@ RUN mkdir -p /run/sshd /etc/ssh && \
 RUN usermod -d /home/workspace -m abc && \
     usermod --shell /bin/zsh abc && \
     usermod --shell /bin/zsh root && \
-    chown -R abc:abc /opt/nvm /opt/oh-my-zsh /opt/oh-my-zsh-custom
+    chown -R abc:abc /opt/nvm /opt/oh-my-zsh /opt/oh-my-zsh-custom && \
+    chmod -R g-w,o-w /usr/share/zsh /usr/local/share/zsh 2>/dev/null || true
 
 # 11. Runtime Initialization Script
 # Ensures home dir and dotfiles are owned by abc when a PVC overmounts /home/workspace
@@ -104,6 +105,10 @@ chown abc:abc /home/workspace/.zshrc /home/workspace/.zsh_history\n\
 # Propagate injected GCP env vars (idempotent)\n\
 echo "export GOOGLE_CLOUD_PROJECT=$(with-contenv bash -c "echo \$GOOGLE_CLOUD_PROJECT")" > /etc/zsh/zshrc.gcp\n\
 echo "export GOOGLE_APPLICATION_CREDENTIALS=$(with-contenv bash -c "echo \$GOOGLE_APPLICATION_CREDENTIALS")" >> /etc/zsh/zshrc.gcp\n\
+# Activate gcloud with the mounted service account credentials\n\
+if [ -f "\$GOOGLE_APPLICATION_CREDENTIALS" ]; then\n\
+  su -s /bin/bash abc -c "/opt/google-cloud-sdk/bin/gcloud auth activate-service-account --key-file=\$GOOGLE_APPLICATION_CREDENTIALS --quiet" 2>/dev/null || true\n\
+fi\n\
 # Recursively fix insecure directories for ZSH compinit\n\
 chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom\n\
 chmod g-w,o-w /home/workspace\n' > /etc/cont-init.d/99-setup-user && \
