@@ -100,6 +100,10 @@ function App() {
   const [isEditServiceDialogOpen, setIsEditServiceDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceConfig | null>(null);
 
+  // Track pending actions (e.g., stopping, starting) for UI feedback
+  const [pendingWorkstations, setPendingWorkstations] = useState<Set<string>>(new Set());
+  const [pendingServices, setPendingServices] = useState<Set<string>>(new Set());
+
   // States for viewing/editing existing image Dockerfiles
   const [selectedImageName, setSelectedImageName] = useState<string | undefined>(undefined);
   const [selectedDockerfile, setSelectedDockerfile] = useState<string | undefined>(undefined);
@@ -296,6 +300,12 @@ function App() {
     if (action === 'delete-infrastructure') url = '/api/workstations/delete-infrastructure';
     if (action === 'stop-all') url = '/api/workstations/stop-all';
 
+    if (name) {
+      setPendingWorkstations(prev => new Set(prev).add(name));
+    } else if (action === 'stop-all') {
+      setPendingWorkstations(new Set(workstations.map(w => w.name)));
+    }
+
     setNotification({ type: 'info', msg: `${action.replace('-', ' ').toUpperCase()} initiated...` });
     try {
       const options: RequestInit = { method: 'POST' };
@@ -311,6 +321,16 @@ function App() {
     } catch (error) {
       console.error(`Failed to ${action}:`, error);
       setNotification({ type: 'error', msg: `Error: ${error}` });
+    } finally {
+      if (name) {
+        setPendingWorkstations(prev => {
+          const next = new Set(prev);
+          next.delete(name);
+          return next;
+        });
+      } else if (action === 'stop-all') {
+        setPendingWorkstations(new Set());
+      }
     }
   };
 
@@ -412,6 +432,7 @@ function App() {
 
   const handleServiceAction = async (action: 'start' | 'stop' | 'delete', name: string) => {
     const url = `/api/services/${user_ns}/${action}/${name}`;
+    setPendingServices(prev => new Set(prev).add(name));
     setNotification({ type: 'info', msg: `${action.toUpperCase()} service ${name}...` });
     try {
       const response = await fetch(url, { method: 'POST' });
@@ -423,7 +444,14 @@ function App() {
       }
       fetchServices();
     } catch (error) {
+      console.error(`Error: ${error}`);
       setNotification({ type: 'error', msg: `Error: ${error}` });
+    } finally {
+      setPendingServices(prev => {
+        const next = new Set(prev);
+        next.delete(name);
+        return next;
+      });
     }
   };
 
@@ -639,10 +667,10 @@ function App() {
                                   handleAction('delete', ws.name);
                                 }
                               }}
+                              disabled={pendingWorkstations.has(ws.name)}
                             >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Box>
+                              {pendingWorkstations.has(ws.name) ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon fontSize="small" />}
+                            </IconButton>                          </Box>
                         </Box>
 
                         {ws.status === 'PROVISIONING' && (
@@ -658,20 +686,33 @@ function App() {
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
                           Image: {ws.image?.split('/').pop()?.split('@')[0]}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontFamily: 'monospace' }}>
                           CPU: {ws.cpu || '500m'} | Mem: {ws.memory || '2Gi'} | Disk: {ws.disk_size || '10Gi'}
                         </Typography>
-                        {ws.gpu && (
-                          <Chip label={`GPU: ${ws.gpu.toUpperCase()}`} size="small" color="secondary" sx={{ mb: 0.5 }} />
-                        )}
-                        {ws.run_as_root && (
-                          <Chip label="ROOT" size="small" color="warning" sx={{ mb: 0.5, ml: 0.5 }} />
-                        )}
+
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+                          {ws.gpu && (
+                            <Chip label={`GPU: ${ws.gpu.toUpperCase()}`} size="small" color="secondary" />
+                          )}
+                          {ws.run_as_root && (
+                            <Chip label="ROOT" size="small" color="warning" />
+                          )}
+                          {ws.pod_name && (
+                            <Chip
+                              label={`Pod: ${ws.pod_name}`}
+                              size="small"
+                              variant="outlined"
+                              color={ws.pod_ready ? "success" : "warning"}
+                            />
+                          )}
+                        </Box>
+
                         {ws.ports && ws.ports.length > 0 && (
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, fontFamily: 'monospace' }}>
                             Ports: {ws.ports.join(', ')}
                           </Typography>
                         )}
+
                         {ws.env_vars && Object.keys(ws.env_vars).length > 0 && (
                           <Accordion disableGutters elevation={0} sx={{ mt: 1, '&:before': { display: 'none' }, bgcolor: 'transparent' }}>
                             <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ p: 0, minHeight: 'auto', '& .MuiAccordionSummary-content': { m: 0 } }}>
@@ -687,9 +728,6 @@ function App() {
                               ))}
                             </AccordionDetails>
                           </Accordion>
-                        )}
-                        {ws.pod_name && (
-                          <Chip label={`Pod: ${ws.pod_name}`} size="small" variant="outlined" sx={{ mt: 1 }} color={ws.pod_ready ? "success" : "warning"} />
                         )}
 
                         {ws.status === 'RUNNING' && (
@@ -725,17 +763,17 @@ function App() {
                           variant="outlined"
                           color="error"
                           onClick={() => handleAction('stop', ws.name)}
-                          disabled={ws.status === 'STOPPED'}
+                          disabled={ws.status === 'STOPPED' || pendingWorkstations.has(ws.name)}
                         >
-                          Stop
+                          {pendingWorkstations.has(ws.name) ? <CircularProgress size={20} color="inherit" /> : 'Stop'}
                         </Button>
                         <Button
                           size="small"
                           variant="contained"
                           onClick={() => handleAction('start', ws.name)}
-                          disabled={ws.status === 'RUNNING' || ws.status === 'PROVISIONING'}
+                          disabled={ws.status === 'RUNNING' || ws.status === 'PROVISIONING' || pendingWorkstations.has(ws.name)}
                         >
-                          Start
+                          {pendingWorkstations.has(ws.name) ? <CircularProgress size={20} color="inherit" /> : 'Start'}
                         </Button>
                       </CardActions>
                     </Card>
@@ -801,8 +839,9 @@ function App() {
                                     handleServiceAction('delete', svc.name);
                                   }
                                 }}
+                                disabled={pendingServices.has(svc.name)}
                               >
-                                <DeleteIcon fontSize="small" />
+                                {pendingServices.has(svc.name) ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon fontSize="small" />}
                               </IconButton>
                             </Box>
                           </Box>
@@ -813,7 +852,17 @@ function App() {
                             <Alert severity="error" sx={{ mb: 1, fontSize: '0.75rem' }}>{svc.message}</Alert>
                           )}
 
-                          <Chip label={svc.service_type || 'custom'} size="small" variant="outlined" sx={{ mb: 1 }} />
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+                            <Chip label={svc.service_type || 'custom'} size="small" variant="outlined" />
+                            {svc.pod_name && (
+                              <Chip
+                                label={`Pod: ${svc.pod_name}`}
+                                size="small"
+                                variant="outlined"
+                                color={svc.pod_ready ? "success" : "warning"}
+                              />
+                            )}
+                          </Box>
 
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
                             Image: {svc.image}
@@ -906,22 +955,22 @@ function App() {
                               Edit Config
                             </Button>
                           )}
-                          <Button
+                        <Button
                             size="small"
                             variant="outlined"
                             color="error"
                             onClick={() => handleServiceAction('stop', svc.name)}
-                            disabled={svc.status === 'STOPPED'}
+                            disabled={svc.status === 'STOPPED' || pendingServices.has(svc.name)}
                           >
-                            Stop
+                            {pendingServices.has(svc.name) ? <CircularProgress size={20} color="inherit" /> : 'Stop'}
                           </Button>
                           <Button
                             size="small"
                             variant="contained"
                             onClick={() => handleServiceAction('start', svc.name)}
-                            disabled={svc.status === 'RUNNING' || svc.status === 'PROVISIONING'}
+                            disabled={svc.status === 'RUNNING' || svc.status === 'PROVISIONING' || pendingServices.has(svc.name)}
                           >
-                            Start
+                            {pendingServices.has(svc.name) ? <CircularProgress size={20} color="inherit" /> : 'Start'}
                           </Button>
                         </CardActions>
                       </Card>
@@ -1063,13 +1112,12 @@ function App() {
                           handleAction('stop-all', '');
                         }
                       }}
-                      disabled={!isClusterReady}
+                      disabled={!isClusterReady || pendingWorkstations.size > 0}
                       fullWidth
                       sx={{ maxWidth: 300 }}
                     >
-                      Stop All Workstations
-                    </Button>
-                    <Button
+                      {pendingWorkstations.size > 0 ? <CircularProgress size={20} color="inherit" /> : 'Stop All Workstations'}
+                    </Button>                    <Button
                       variant="outlined"
                       color="error"
                       onClick={() => {
