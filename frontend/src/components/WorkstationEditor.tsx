@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import { Box, Button, Typography, Paper, Alert, Snackbar, TextField, LinearProgress } from '@mui/material';
-import DEFAULT_DOCKERFILE from '@root/templates/Dockerfile.template?raw';
 
 interface WorkstationEditorProps {
   initialDockerfile?: string;
@@ -14,11 +13,32 @@ interface WorkstationEditorProps {
 }
 
 const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile, initialName, onBuildSuccess, onBuildStart, onReset, initialBuildId, initialBuildStatus }) => {
-  const [dockerfile, setDockerfile] = useState(initialDockerfile || DEFAULT_DOCKERFILE);
+  const [dockerfile, setDockerfile] = useState(initialDockerfile || '');
+  const [defaultDockerfile, setDefaultDockerfile] = useState('');
   const [name, setName] = useState(initialName || 'workstation');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', msg: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeBuild, setActiveBuild] = useState<{id: string, status: string} | null>(null);
+
+  // Fetch default template from backend on mount
+  useEffect(() => {
+    const fetchDefault = async () => {
+      try {
+        const response = await fetch(`/api/workstations/templates/default?v=${Date.now()}`, { cache: 'no-store' });
+        if (response.ok) {
+          const text = await response.text();
+          setDefaultDockerfile(text);
+          // If no initial dockerfile provided, use the default one
+          if (!initialDockerfile) {
+            setDockerfile(text);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch default template:', error);
+      }
+    };
+    fetchDefault();
+  }, [initialDockerfile]);
 
   // Sync with props when they change
   useEffect(() => {
@@ -106,8 +126,20 @@ const WorkstationEditor: React.FC<WorkstationEditorProps> = ({ initialDockerfile
     }
   };
 
-  const handleReset = () => {
-    setDockerfile(DEFAULT_DOCKERFILE);
+  const handleReset = async () => {
+    // Re-fetch to ensure we get the latest from disk
+    try {
+      const response = await fetch(`/api/workstations/templates/default?v=${Date.now()}`, { cache: 'no-store' });
+      if (response.ok) {
+        const text = await response.text();
+        setDockerfile(text);
+        setDefaultDockerfile(text);
+      } else {
+        setDockerfile(defaultDockerfile);
+      }
+    } catch (error) {
+      setDockerfile(defaultDockerfile);
+    }
     setName('workstation');
     if (onReset) onReset();
   };

@@ -12,6 +12,7 @@ import google.auth
 import logging
 import time
 import subprocess
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,26 @@ _cb_manager = None
 _compute_manager = None
 _service_usage_manager = None
 _k8s_manager = None
+
+@router.get("/templates/default", response_class=PlainTextResponse)
+def get_default_template():
+    try:
+        # Current file is at backend/app/api/workstations.py
+        # root is 3 levels up: api/ -> app/ -> backend/ -> root/
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+        template_path = os.path.join(root_dir, "templates", "Dockerfile.template")
+        
+        if os.path.exists(template_path):
+            with open(template_path, "r") as f:
+                return f.read()
+        else:
+            logger.warning(f"Default template not found at {template_path}")
+            # Fallback to a basic template if file is missing
+            return "FROM gitpod/openvscode-server:latest\n"
+    except Exception as e:
+        logger.error(f"Error reading default template: {e}")
+        return f"Error: {str(e)}"
 
 def get_k8s_manager():
     global _k8s_manager

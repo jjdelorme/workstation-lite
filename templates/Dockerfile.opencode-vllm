@@ -45,7 +45,8 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
 # 6. Install Claude Code
-RUN bash -c "source $NVM_DIR/nvm.sh && curl -fsSL https://claude.ai/install.sh | bash"
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    mv /root/.local/bin/claude /usr/local/bin/claude
 
 # 7. Install vLLM and OpenCode
 # We use a virtual environment to avoid PEP 668 conflicts and isolate vLLM's heavy dependencies
@@ -58,7 +59,6 @@ RUN bash -c "source $NVM_DIR/nvm.sh && npm install -g opencode-ai"
 # 8. Ensure tools are globally available
 RUN ln -s $(bash -c "source $NVM_DIR/nvm.sh && which node") /usr/local/bin/node && \
     ln -s $(bash -c "source $NVM_DIR/nvm.sh && which npm") /usr/local/bin/npm && \
-    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which claude") /usr/local/bin/claude && \
     ln -s $(bash -c "source $NVM_DIR/nvm.sh && which opencode") /usr/local/bin/opencode
 
 # 9. Download a lean default Powerlevel10k config
@@ -119,9 +119,12 @@ RUN mkdir -p /etc/skel/.config/opencode && \
 # This service starts automatically on container launch
 RUN mkdir -p /etc/services.d/vllm && \
     printf "#!/with-contenv bash\n\
-# We use AWQ quantization to fit Gemma 4 31B on 24GB L4\n\
-# Use --quantization awq for official quantized variants or --quantization gptq if applicable\n\
-exec /opt/vllm-venv/bin/python -m vllm.entrypoints.openai.api_server \n\
+# Ensure cache directory exists and is owned by abc\n\
+mkdir -p /home/workspace/.cache/huggingface\n\
+chown -R abc:abc /home/workspace/.cache/huggingface\n\
+export HF_HOME=/home/workspace/.cache/huggingface\n\
+# Run as abc user to ensure model is stored in user's home and accessible\n\
+exec s6-setuidgid abc /opt/vllm-venv/bin/python -m vllm.entrypoints.openai.api_server \n\
     --model google/gemma-4-31B-it \n\
     --quantization awq \n\
     --dtype half \n\

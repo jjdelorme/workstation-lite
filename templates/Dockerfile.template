@@ -41,6 +41,7 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
              nvm alias default 20 && \
              npm install -g @google/gemini-cli" && \
     curl -fsSL https://claude.ai/install.sh | bash && \
+    mv /root/.local/bin/claude /usr/local/bin/claude && \
     git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
