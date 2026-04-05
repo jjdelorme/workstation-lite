@@ -48,8 +48,10 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
 RUN bash -c "source $NVM_DIR/nvm.sh && curl -fsSL https://claude.ai/install.sh | bash"
 
 # 7. Install vLLM and OpenCode
-# vLLM is installed globally for use by the S6 service
-RUN pip3 install vllm
+# We use a virtual environment to avoid PEP 668 conflicts and isolate vLLM's heavy dependencies
+RUN python3 -m venv /opt/vllm-venv && \
+    /opt/vllm-venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/vllm-venv/bin/pip install --no-cache-dir vllm
 # OpenCode is installed via npm and linked to /usr/local/bin
 RUN bash -c "source $NVM_DIR/nvm.sh && npm install -g opencode-ai"
 
@@ -119,7 +121,7 @@ RUN mkdir -p /etc/services.d/vllm && \
     printf "#!/with-contenv bash\n\
 # We use AWQ quantization to fit Gemma 4 31B on 24GB L4\n\
 # Use --quantization awq for official quantized variants or --quantization gptq if applicable\n\
-exec python3 -m vllm.entrypoints.openai.api_server \n\
+exec /opt/vllm-venv/bin/python -m vllm.entrypoints.openai.api_server \n\
     --model google/gemma-4-31B-it \n\
     --quantization awq \n\
     --dtype half \n\
