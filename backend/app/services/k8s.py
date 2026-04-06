@@ -150,8 +150,8 @@ class K8sManager:
         container_ports = [client.V1ContainerPort(container_port=p) for p in ports]
 
         # Resource requests
-        resource_requests = {"cpu": cpu, "memory": memory}
-        resource_limits = {}
+        resource_requests = {"cpu": cpu, "memory": memory, "ephemeral-storage": "10Gi"}
+        resource_limits = {"ephemeral-storage": "10Gi"}
 
         # GPU and Spot support
         node_selector = {}
@@ -266,6 +266,10 @@ class K8sManager:
                                 command=["sh", "-c", init_command],
                                 security_context=client.V1SecurityContext(
                                     run_as_user=0
+                                ),
+                                resources=client.V1ResourceRequirements(
+                                    requests={"ephemeral-storage": "10Gi"},
+                                    limits={"ephemeral-storage": "10Gi"}
                                 ),
                                 volume_mounts=[
                                     client.V1VolumeMount(name="home", mount_path="/home/workspace"),
