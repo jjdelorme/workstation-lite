@@ -2,10 +2,11 @@ FROM linuxserver/vscodium-web:latest
                                                                                                                
 # 1. Install system dependencies (as root)
 # Added openssh-server so we can configure sshd_config
-RUN apt-get update && apt-get install -y \                                                                  
-    curl git wget zsh vim tmux jq build-essential \
+RUN apt-get update && apt-get install -y \
+    curl git wget zsh vim tmux jq build-essential unzip ripgrep ca-certificates \
     python3 python3-pip python3.12-venv golang-go fontconfig sudo locales openssh-server \
-    && rm -rf /var/lib/apt/lists/*                                                                                                                                                                                          
+    && rm -rf /var/lib/apt/lists/* && \
+    echo "abc ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/abc
                                                                                                                                                                                                                                
 # Generate and set locales (Essential for Powerlevel10k, Zsh encoding, and Tmux)
 RUN locale-gen en_US.UTF-8                                                                                                                                                                                                  
@@ -40,15 +41,14 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
              nvm install 20 && \
              nvm alias default 20 && \
              npm install -g @google/gemini-cli" && \
-    curl -fsSL https://claude.ai/install.sh | bash && \
-    mv /root/.local/bin/claude /usr/local/bin/claude && \
     git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
 # 6. Global Symlinks (Ensures tools are found regardless of shell login type)
-RUN ln -s $(bash -c "source $NVM_DIR/nvm.sh && which node") /usr/local/bin/node && \
-    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which npm") /usr/local/bin/npm && \
-    ln -s $(bash -c "source $NVM_DIR/nvm.sh && which gemini") /usr/local/bin/gemini
+RUN bash -c "source $NVM_DIR/nvm.sh && \
+    ln -sf \$(which node) /usr/local/bin/node && \
+    ln -sf \$(which npm) /usr/local/bin/npm && \
+    ln -sf \$(which gemini) /usr/local/bin/gemini"
 
 # 7. Download a lean default Powerlevel10k config
 RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
@@ -62,7 +62,7 @@ RUN mkdir -p /etc/zsh && \
     echo 'export ZSH_DISABLE_COMPFIX="true"' >> /etc/zsh/zshrc && \
     echo 'zsh-newuser-install() { :; }' >> /etc/zsh/zshrc && \
     echo '[ -f /etc/zsh/zshrc.gcp ] && source /etc/zsh/zshrc.gcp' >> /etc/zsh/zshrc && \
-    echo 'export PATH=$PATH:/opt/google-cloud-sdk/bin' >> /etc/zsh/zshrc && \
+    echo 'export PATH=$HOME/.local/bin:$PATH:/opt/google-cloud-sdk/bin' >> /etc/zsh/zshrc && \
     echo '[[ -z "$TMUX" ]] && export TERM=xterm-256color' >> /etc/zsh/zshrc && \
     echo 'export ZSH="/opt/oh-my-zsh"' >> /etc/zsh/zshrc && \
     echo 'export ZSH_CUSTOM="/opt/oh-my-zsh-custom"' >> /etc/zsh/zshrc && \
@@ -104,6 +104,10 @@ RUN mkdir -p /custom-cont-init.d && \
     echo 'chown abc:abc /home/workspace/.zsh_history /home/workspace/.zshrc' >> /custom-cont-init.d/99-setup-user && \
     echo '[[ ! -f /home/workspace/.p10k.zsh ]] && cp /etc/skel/.p10k.zsh /home/workspace/.p10k.zsh' >> /custom-cont-init.d/99-setup-user && \
     echo 'chown abc:abc /home/workspace/.p10k.zsh' >> /custom-cont-init.d/99-setup-user && \
+    echo '# Install Claude Code on first launch (curl installer supports auto-updates)' >> /custom-cont-init.d/99-setup-user && \
+    echo 'if [ ! -f /home/workspace/.local/bin/claude ]; then' >> /custom-cont-init.d/99-setup-user && \
+    echo '  su -s /bin/bash abc -c "HOME=/home/workspace curl -fsSL https://claude.ai/install.sh | bash" || true' >> /custom-cont-init.d/99-setup-user && \
+    echo 'fi' >> /custom-cont-init.d/99-setup-user && \
     echo '# Replace default Debian .zshrc (has bare compinit that causes insecure dir warnings)' >> /custom-cont-init.d/99-setup-user && \
     echo 'if grep -q "prompt adam1" /home/workspace/.zshrc 2>/dev/null; then echo "# User customizations go here" > /home/workspace/.zshrc; fi' >> /custom-cont-init.d/99-setup-user && \
     echo '# Propagate GCP env vars into shell sessions' >> /custom-cont-init.d/99-setup-user && \
