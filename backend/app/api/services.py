@@ -64,6 +64,9 @@ def list_all_services(user_ns: str):
                 pod_ready=s.get("pod_ready", False),
                 message=s.get("message"),
                 connect_hint=connect_hint,
+                restart_count=s.get("restart_count", 0),
+                last_restart_time=s.get("last_restart_time"),
+                last_restart_reason=s.get("last_restart_reason")
             )
         )
     return ServiceListResponse(services=services, count=len(services))
@@ -174,6 +177,9 @@ def get_service_status(user_ns: str, name: str):
         pod_name=res.get("pod_name"),
         pod_ready=res.get("pod_ready", False),
         message=res.get("message"),
+        restart_count=res.get("restart_count", 0),
+        last_restart_time=res.get("last_restart_time"),
+        last_restart_reason=res.get("last_restart_reason")
     )
 
 

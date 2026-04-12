@@ -410,7 +410,10 @@ def list_all_workstations(user_ns: str):
                 env_vars=config.get("env_vars", {}),
                 pod_name=w.get("pod_name"),
                 pod_ready=w.get("pod_ready", False),
-                message=w.get("message")
+                message=w.get("message"),
+                restart_count=w.get("restart_count", 0),
+                last_restart_time=w.get("last_restart_time"),
+                last_restart_reason=w.get("last_restart_reason")
             )
         )
     return WorkstationListResponse(workstations=workstations, count=len(workstations))
@@ -636,7 +639,11 @@ def get_workstation_status(user_ns: str, name: str):
         pod_name=res["pod_name"],
         pod_ready=res["pod_ready"],
         image=res.get("image"),
-        run_as_root=config.get("run_as_root", False)
+        run_as_root=config.get("run_as_root", False),
+        message=res.get("message"),
+        restart_count=res.get("restart_count", 0),
+        last_restart_time=res.get("last_restart_time"),
+        last_restart_reason=res.get("last_restart_reason")
     )
 
 @router.get("/nodes")

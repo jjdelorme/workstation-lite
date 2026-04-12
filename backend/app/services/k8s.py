@@ -327,14 +327,24 @@ class K8sManager:
             pod_ready = False
             pod_name = f"{name}-0"
             error_message = None
-            
+            restart_count = 0
+            last_restart_time = None
+            last_restart_reason = None
+
             # Check for Pod specific status to detect errors early
             try:
                 pod = self.core_api.read_namespaced_pod(name=pod_name, namespace=user_ns)
                 if pod.status.container_statuses:
                     container_status = pod.status.container_statuses[0]
                     state = container_status.state
-                    
+
+                    restart_count = container_status.restart_count or 0
+                    if container_status.last_state and container_status.last_state.terminated:
+                        last_term = container_status.last_state.terminated
+                        if last_term.finished_at:
+                            last_restart_time = last_term.finished_at.isoformat()
+                        last_restart_reason = last_term.reason
+
                     if state.waiting:
                         reason = state.waiting.reason
                         if reason in ["ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"]:
@@ -347,6 +357,27 @@ class K8sManager:
             except Exception:
                 pass # Pod might not be created yet if STS just started
 
+            # Fetch recent cluster events for the pod (e.g. Evicted, Preempting)
+            try:
+                events = self.core_api.list_namespaced_event(namespace=user_ns, field_selector=f"involvedObject.name={pod_name}")
+                recent_warnings = []
+                for e in events.items:
+                    if e.type == "Warning" or e.reason in ["Evicted", "Preempting", "Failed", "NodeNotReady"]:
+                        recent_warnings.append(e)
+                if recent_warnings:
+                    recent_warnings.sort(key=lambda x: x.last_timestamp or x.event_time or x.metadata.creation_timestamp, reverse=True)
+                    latest_event = recent_warnings[0]
+                    event_ts = latest_event.last_timestamp or latest_event.event_time or latest_event.metadata.creation_timestamp
+                    if event_ts:
+                        event_time_str = event_ts.isoformat()
+                        if not last_restart_time or event_time_str > last_restart_time:
+                            last_restart_time = event_time_str
+                            last_restart_reason = f"Cluster Event ({latest_event.reason}): {latest_event.message}"
+                            if restart_count == 0:
+                                restart_count = 1
+            except Exception as ev_err:
+                logger.error(f"Error fetching events for {pod_name}: {ev_err}")
+
             if status != "ERROR":
                 if sts.status.ready_replicas and sts.status.ready_replicas > 0:
                     status = "RUNNING"
@@ -355,12 +386,15 @@ class K8sManager:
                     status = "STOPPED"
                 else:
                     status = "PROVISIONING"
-                
+
             return {
                 "status": status,
                 "pod_name": pod_name,
                 "pod_ready": pod_ready,
-                "message": error_message
+                "message": error_message,
+                "restart_count": restart_count,
+                "last_restart_time": last_restart_time,
+                "last_restart_reason": last_restart_reason
             }
         except Exception as e:
             if hasattr(e, 'status') and e.status == 404:
@@ -864,12 +898,23 @@ class K8sManager:
             pod_ready = False
             pod_name = f"{k8s_name}-0"
             error_message = None
+            restart_count = 0
+            last_restart_time = None
+            last_restart_reason = None
 
             try:
                 pod = self.core_api.read_namespaced_pod(name=pod_name, namespace=user_ns)
                 if pod.status.container_statuses:
                     container_status = pod.status.container_statuses[0]
                     state = container_status.state
+                    
+                    restart_count = container_status.restart_count or 0
+                    if container_status.last_state and container_status.last_state.terminated:
+                        last_term = container_status.last_state.terminated
+                        if last_term.finished_at:
+                            last_restart_time = last_term.finished_at.isoformat()
+                        last_restart_reason = last_term.reason
+
                     if state.waiting:
                         reason = state.waiting.reason
                         if reason in ["ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"]:
@@ -881,6 +926,27 @@ class K8sManager:
                             error_message = f"Pod Terminated with exit code {state.terminated.exit_code}: {state.terminated.reason}"
             except Exception:
                 pass
+
+            # Fetch recent cluster events for the pod (e.g. Evicted, Preempting)
+            try:
+                events = self.core_api.list_namespaced_event(namespace=user_ns, field_selector=f"involvedObject.name={pod_name}")
+                recent_warnings = []
+                for e in events.items:
+                    if e.type == "Warning" or e.reason in ["Evicted", "Preempting", "Failed", "NodeNotReady"]:
+                        recent_warnings.append(e)
+                if recent_warnings:
+                    recent_warnings.sort(key=lambda x: x.last_timestamp or x.event_time or x.metadata.creation_timestamp, reverse=True)
+                    latest_event = recent_warnings[0]
+                    event_ts = latest_event.last_timestamp or latest_event.event_time or latest_event.metadata.creation_timestamp
+                    if event_ts:
+                        event_time_str = event_ts.isoformat()
+                        if not last_restart_time or event_time_str > last_restart_time:
+                            last_restart_time = event_time_str
+                            last_restart_reason = f"Cluster Event ({latest_event.reason}): {latest_event.message}"
+                            if restart_count == 0:
+                                restart_count = 1
+            except Exception as ev_err:
+                logger.error(f"Error fetching events for {pod_name}: {ev_err}")
 
             if status != "ERROR":
                 if sts.status.ready_replicas and sts.status.ready_replicas > 0:
@@ -896,6 +962,9 @@ class K8sManager:
                 "pod_name": pod_name,
                 "pod_ready": pod_ready,
                 "message": error_message,
+                "restart_count": restart_count,
+                "last_restart_time": last_restart_time,
+                "last_restart_reason": last_restart_reason
             }
         except Exception as e:
             if hasattr(e, 'status') and e.status == 404:

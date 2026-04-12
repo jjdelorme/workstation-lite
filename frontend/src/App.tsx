@@ -32,6 +32,9 @@ interface WorkstationStatus {
   pod_name?: string;
   pod_ready: boolean;
   message?: string;
+  restart_count?: number;
+  last_restart_time?: string;
+  last_restart_reason?: string;
 }
 
 interface WorkstationListResponse {
@@ -55,6 +58,9 @@ interface ServiceStatusInfo {
   pod_name?: string;
   pod_ready: boolean;
   message?: string;
+  restart_count?: number;
+  last_restart_time?: string;
+  last_restart_reason?: string;
   connect_hint?: string;
 }
 
@@ -743,6 +749,14 @@ function App() {
                           </Alert>
                         )}
 
+                        {(ws.restart_count ?? 0) > 0 && (
+                          <Alert severity="warning" sx={{ mb: 1, fontSize: '0.75rem', py: 0, px: 1, '& .MuiAlert-message': { py: 0.5 } }}>
+                            Restarts: {ws.restart_count}
+                            {ws.last_restart_time && ` (Last: ${new Date(ws.last_restart_time).toLocaleString()})`}
+                            {ws.last_restart_reason && ` - Reason: ${ws.last_restart_reason}`}
+                          </Alert>
+                        )}
+
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontFamily: 'monospace' }}>
                           Image: {ws.image?.split('/').pop()?.split('@')[0]}
                         </Typography>
@@ -912,6 +926,14 @@ function App() {
 
                           {svc.status === 'ERROR' && svc.message && (
                             <Alert severity="error" sx={{ mb: 1, fontSize: '0.75rem' }}>{svc.message}</Alert>
+                          )}
+
+                          {(svc.restart_count ?? 0) > 0 && (
+                            <Alert severity="warning" sx={{ mb: 1, fontSize: '0.75rem', py: 0, px: 1, '& .MuiAlert-message': { py: 0.5 } }}>
+                              Restarts: {svc.restart_count}
+                              {svc.last_restart_time && ` (Last: ${new Date(svc.last_restart_time).toLocaleString()})`}
+                              {svc.last_restart_reason && ` - Reason: ${svc.last_restart_reason}`}
+                            </Alert>
                           )}
 
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
