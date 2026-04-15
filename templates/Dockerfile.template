@@ -4,7 +4,7 @@ FROM linuxserver/vscodium-web:latest
 # Added openssh-server so we can configure sshd_config
 RUN apt-get update && apt-get install -y \
     curl git wget zsh vim tmux jq build-essential unzip ripgrep ca-certificates \
-    python3 python3-pip python3.12-venv golang-go fontconfig sudo locales openssh-server \
+    python3 python3-pip python3.12-venv golang-go fontconfig sudo locales openssh-server libvulkan1 \
     && rm -rf /var/lib/apt/lists/* && \
     echo "abc ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/abc
                                                                                                                                                                                                                                
