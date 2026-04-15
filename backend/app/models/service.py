@@ -96,6 +96,9 @@ class ServiceResponse(BaseModel):
     pod_name: Optional[str] = None
     pod_ready: bool = False
     message: Optional[str] = None
+    restart_count: int = 0
+    last_restart_time: Optional[str] = None
+    last_restart_reason: Optional[str] = None
     connect_hint: Optional[str] = None
 
 
