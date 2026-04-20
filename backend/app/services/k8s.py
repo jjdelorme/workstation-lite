@@ -824,6 +824,17 @@ class K8sManager:
                         "resource-type": "service",
                     }),
                     spec=client.V1PodSpec(
+                        init_containers=[
+                            client.V1Container(
+                                name="fix-service-permissions",
+                                image="busybox",
+                                command=["sh", "-c", f"chmod 777 {data_mount_path}"],
+                                security_context=client.V1SecurityContext(
+                                    run_as_user=0
+                                ),
+                                volume_mounts=volume_mounts,
+                            )
+                        ],
                         containers=[
                             client.V1Container(
                                 name=k8s_name,

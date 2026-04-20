@@ -65,6 +65,15 @@ DEFAULT_SERVICE_CATALOG: list[ServiceCatalogEntry] = [
         data_mount_path="/var/lib/rabbitmq",
         health_check_command=["rabbitmq-diagnostics", "check_running"],
     ),
+    ServiceCatalogEntry(
+        service_type="neo4j",
+        label="Neo4j Community",
+        image="neo4j:5",
+        ports=[7474, 7687],
+        data_mount_path="/data",
+        health_check_command=["wget", "-qO-", "http://localhost:7474"],
+        required_env_vars={"NEO4J_AUTH": "neo4j/changeme"},
+    ),
 ]
 
 
