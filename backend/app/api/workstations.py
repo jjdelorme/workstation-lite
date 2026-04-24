@@ -690,3 +690,14 @@ def save_ssh_key(user_ns: str, req: SshKeyRequest):
     except Exception as e:
         logger.error(f"Error saving SSH key: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{user_ns}/agents/{name}")
+def get_workstation_agents_endpoint(user_ns: str, name: str):
+    try:
+        agents_data = get_k8s_manager().get_workstation_agents(user_ns, name)
+        return agents_data
+    except Exception as e:
+        logger.error(f"Error getting agents for workstation {name}: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
+

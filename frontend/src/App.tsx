@@ -8,6 +8,7 @@ import WorkstationEditor from './components/WorkstationEditor';
 import ConnectionInstructions from './components/ConnectionInstructions';
 import NewWorkstationDialog from './components/NewWorkstationDialog';
 import EditWorkstationDialog from './components/EditWorkstationDialog';
+import AgentStatusDialog from './components/AgentStatusDialog';
 import NewServiceDialog from './components/NewServiceDialog';
 import EditServiceDialog from './components/EditServiceDialog';
 import type { ImageMetadata } from './components/NewWorkstationDialog';
@@ -15,6 +16,7 @@ import type { WorkstationConfig } from './components/EditWorkstationDialog';
 import type { CatalogEntry } from './components/NewServiceDialog';
 import type { ServiceConfig } from './components/EditServiceDialog';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 interface WorkstationStatus {
   name: string;
@@ -99,6 +101,7 @@ function App() {
   const [isNewDialogOpen, setIsNewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingWorkstation, setEditingWorkstation] = useState<WorkstationConfig | null>(null);
+  const [agentStatusDialogWs, setAgentStatusDialogWs] = useState<string | null>(null);
 
   // Service state
   const [services, setServices] = useState<ServiceStatusInfo[]>([]);
@@ -834,6 +837,18 @@ function App() {
                             Edit Config
                           </Button>
                         )}
+
+                        {ws.status === 'RUNNING' && (
+                          <Tooltip title="View Agents Activity">
+                            <IconButton
+                              size="small"
+                              onClick={() => setAgentStatusDialogWs(ws.name)}
+                              color="primary"
+                            >
+                              <SmartToyIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         <Button
                           size="small"
                           variant="outlined"
@@ -1360,7 +1375,16 @@ function App() {
         service={editingService}
       />
 
+
+      <AgentStatusDialog
+        open={agentStatusDialogWs !== null}
+        onClose={() => setAgentStatusDialogWs(null)}
+        userNs={user_ns}
+        workstationName={agentStatusDialogWs || ''}
+      />
+
       {notification && (
+
         <Snackbar
           open={!!notification}
           autoHideDuration={6000}

@@ -660,6 +660,29 @@ class K8sManager:
             logger.error(f"Error scaling down idle workstations: {e}")
         return scaled_namespaces
 
+
+    def get_workstation_agents(self, user_ns: str, name: str) -> dict:
+        self._refresh_config()
+        if not self.core_api:
+            return {"panes": []}
+        try:
+            pod_name = f"{name}-0:8001"
+            import json
+            response = self.core_api.connect_get_namespaced_pod_proxy_with_path(
+                name=pod_name,
+                namespace=user_ns,
+                path="api/panes"
+            )
+            # The response is usually a string or bytes
+            if isinstance(response, str):
+                return json.loads(response)
+            elif isinstance(response, bytes):
+                return json.loads(response.decode('utf-8'))
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get agents for workstation {name} in {user_ns}: {e}")
+            return {"panes": []}
+
     def save_adc_secret(self, user_ns: str, adc_json: str):
         self._refresh_config()
         if not self.core_api: return
