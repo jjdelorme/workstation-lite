@@ -668,17 +668,23 @@ class K8sManager:
         try:
             pod_name = f"{name}-0:8001"
             import json
+            import ast
             response = self.core_api.connect_get_namespaced_pod_proxy_with_path(
                 name=pod_name,
                 namespace=user_ns,
-                path="api/panes"
+                path="api/panes",
+                _preload_content=False
             )
-            # The response is usually a string or bytes
-            if isinstance(response, str):
-                return json.loads(response)
-            elif isinstance(response, bytes):
-                return json.loads(response.decode('utf-8'))
-            return response
+            raw_data = response.read().decode('utf-8')
+            
+            try:
+                return json.loads(raw_data)
+            except json.JSONDecodeError:
+                # Fallback if k8s client somehow still returns a python dict string
+                try:
+                    return ast.literal_eval(raw_data)
+                except Exception:
+                    raise Exception(f"Failed to parse proxy response. Raw data: {raw_data}")
         except Exception as e:
             logger.error(f"Failed to get agents for workstation {name} in {user_ns}: {e}")
             return {"panes": [{"pane_id": "error", "window_name": "ERROR", "command": "API_PROXY", "status": "FAILED", "task_summary": f"K8s Proxy Error: {str(e)}"}]}
