@@ -26,8 +26,9 @@ For each pane, determine:
 3. "git_branch": The active git branch (if any, omit or null if none).
 4. "task_summary": What specific task or process is currently running or being investigated right now.
 5. "status": The state of the process (e.g. RUNNING, WAITING, ERROR).
+6. "pane_index": The tmux pane index (e.g. 0, 1, 2) which the user presses Ctrl+B Q to see. Extract this from the "Pane Index" field.
 
-Return a structured JSON array summarizing them. Keys: pane_id, window_name, command, status, initial_intent, working_directory, git_branch, task_summary.
+Return a structured JSON array summarizing them. Keys: pane_id, window_name, pane_index, command, status, initial_intent, working_directory, git_branch, task_summary.
 Return ONLY valid JSON array without any markdown formatting.
 
 <tmux_context>

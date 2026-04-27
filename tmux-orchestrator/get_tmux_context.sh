@@ -1,7 +1,7 @@
 #!/bin/bash
 # Retrieves all tmux panes and their recent history (last 100 lines)
 
-panes=$(tmux list-panes -a -F "#{pane_id} | Session: #{session_name} | Window: #{window_name} | Command: #{pane_current_command} | Path: #{pane_current_path}" 2>/dev/null || echo "No tmux panes found")
+panes=$(tmux list-panes -a -F "#{pane_id} | Session: #{session_name} | Window: #{window_name} | Pane Index: #{pane_index} | Command: #{pane_current_command} | Path: #{pane_current_path}" 2>/dev/null || echo "No tmux panes found")
 
 echo "=== TMUX PANES ==="
 echo "$panes"
