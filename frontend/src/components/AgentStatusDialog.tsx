@@ -8,6 +8,9 @@ interface PaneSummary {
     command: string;
     status: string;
     task_summary: string;
+    initial_intent?: string;
+    working_directory?: string;
+    git_branch?: string;
 }
 
 interface AgentStatusDialogProps {
@@ -85,8 +88,21 @@ export default function AgentStatusDialog({ open, onClose, userNs, workstationNa
                                         color={pane.status === 'RUNNING' ? 'success' : pane.status === 'WAITING' ? 'warning' : 'default'}
                                     />
                                 </Box>
-                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                                    {pane.task_summary}
+                                
+                                {pane.working_directory && (
+                                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5, fontFamily: 'monospace' }}>
+                                        📁 {pane.working_directory} {pane.git_branch && <Chip label={`🌿 ${pane.git_branch}`} size="small" sx={{ ml: 1, height: '20px', fontSize: '0.7rem' }} />}
+                                    </Typography>
+                                )}
+                                
+                                {pane.initial_intent && (
+                                    <Typography variant="body2" sx={{ mb: 1, fontStyle: 'italic', color: 'text.secondary' }}>
+                                        Goal: {pane.initial_intent}
+                                    </Typography>
+                                )}
+
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 1 }}>
+                                    <strong>Current Status:</strong> {pane.task_summary}
                                 </Typography>
                             </Paper>
                         ))}

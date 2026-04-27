@@ -18,8 +18,16 @@ async def get_tmux_summaries():
         raw_output = tmux_context.stdout
         
         prompt = f"""
-Using the provided Tmux terminal context, analyze the history of each pane and summarize what task/process is currently running, its status, and context.
-Return a structured JSON array summarizing them. Keys: pane_id, window_name, command, status (e.g. RUNNING, WAITING), task_summary. 
+Using the provided Tmux terminal context, analyze the history of each pane.
+
+For each pane, determine:
+1. "initial_intent": The overall goal or reason this session was started (infer this from the directory, branch, or any initial commands/context visible).
+2. "working_directory": The directory path the pane is currently in.
+3. "git_branch": The active git branch (if any, omit or null if none).
+4. "task_summary": What specific task or process is currently running or being investigated right now.
+5. "status": The state of the process (e.g. RUNNING, WAITING, ERROR).
+
+Return a structured JSON array summarizing them. Keys: pane_id, window_name, command, status, initial_intent, working_directory, git_branch, task_summary.
 Return ONLY valid JSON array without any markdown formatting.
 
 <tmux_context>
