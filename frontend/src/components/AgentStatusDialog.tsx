@@ -98,7 +98,7 @@ export default function AgentStatusDialog({ open, onClose, userNs, workstationNa
                         No active tmux panes or agents found.
                     </Typography>
                 ) : hasLayouts ? (
-                    <Box sx={{ position: 'relative', width: '100%', minHeight: '600px', p: 2 }}>
+                    <Box sx={{ position: 'relative', width: '100%', height: '70vh', minHeight: '500px' }}>
                         {panes.map((pane) => {
                             if (!pane.layout) return null;
                             const leftPct = (pane.layout.left / maxLayout.width) * 100;
@@ -113,10 +113,10 @@ export default function AgentStatusDialog({ open, onClose, userNs, workstationNa
                                     elevation={2}
                                     sx={{
                                         position: 'absolute',
-                                        left: `calc(${leftPct}% + 16px)`,
-                                        top: `calc(${topPct}% + 16px)`,
-                                        width: `calc(${widthPct}% - 8px)`,
-                                        height: `calc(${heightPct}% - 8px)`,
+                                        left: `${leftPct}%`,
+                                        top: `${topPct}%`,
+                                        width: `${widthPct}%`,
+                                        height: `${heightPct}%`,
                                         overflowY: 'auto',
                                         p: 2,
                                         display: 'flex',
