@@ -681,7 +681,7 @@ class K8sManager:
             return response
         except Exception as e:
             logger.error(f"Failed to get agents for workstation {name} in {user_ns}: {e}")
-            return {"panes": []}
+            return {"panes": [{"pane_id": "error", "window_name": "ERROR", "command": "API_PROXY", "status": "FAILED", "task_summary": f"K8s Proxy Error: {str(e)}"}]}
 
     def save_adc_secret(self, user_ns: str, adc_json: str):
         self._refresh_config()
