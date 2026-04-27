@@ -5,6 +5,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 interface PaneSummary {
     pane_id: string;
     window_name: string;
+    pane_index?: string | number;
     command: string;
     status: string;
     task_summary: string;
@@ -80,7 +81,10 @@ export default function AgentStatusDialog({ open, onClose, userNs, workstationNa
                             <Paper key={pane.pane_id} variant="outlined" sx={{ mb: 2, p: 2 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                                     <Typography variant="subtitle1" fontWeight="bold">
-                                        {pane.window_name} <Typography component="span" variant="body2" color="text.secondary">({pane.command})</Typography>
+                                        {pane.window_name} 
+                                        <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                                            (Pane {pane.pane_index !== undefined ? pane.pane_index : pane.pane_id.replace('%', '')} - {pane.command})
+                                        </Typography>
                                     </Typography>
                                     <Chip
                                         label={pane.status}
