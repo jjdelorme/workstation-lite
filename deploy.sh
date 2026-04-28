@@ -18,6 +18,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --region "$REGION" \
     --project "$PROJECT_ID" \
+    --service-account "eventssample-sa@$PROJECT_ID.iam.gserviceaccount.com" \
     --no-allow-unauthenticated \
     --port 8080
 
