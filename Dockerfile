@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 
 # Copy built frontend assets to the location FastAPI expects
-COPY --from=frontend-builder /app/frontend/dist ./app/static
+COPY --from=frontend-builder /app/backend/app/static ./app/static
 
 # Expose port required by Cloud Run
 ENV PORT=8080
