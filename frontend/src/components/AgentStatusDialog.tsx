@@ -140,7 +140,7 @@ export default function AgentStatusDialog({ open, onClose, userNs, workstationNa
                                         <Chip
                                             label={pane.status}
                                             size="small"
-                                            color={pane.status === 'RUNNING' ? 'success' : pane.status === 'WAITING' ? 'warning' : 'default'}
+                                            color={pane.status?.toUpperCase() === 'RUNNING' ? 'success' : pane.status?.toUpperCase() === 'WAITING' ? 'warning' : pane.status?.toUpperCase() === 'ERROR' ? 'error' : 'default'}
                                         />
                                     </Box>
                                     
@@ -177,7 +177,7 @@ export default function AgentStatusDialog({ open, onClose, userNs, workstationNa
                                     <Chip
                                         label={pane.status}
                                         size="small"
-                                        color={pane.status === 'RUNNING' ? 'success' : pane.status === 'WAITING' ? 'warning' : 'default'}
+                                        color={pane.status?.toUpperCase() === 'RUNNING' ? 'success' : pane.status?.toUpperCase() === 'WAITING' ? 'warning' : pane.status?.toUpperCase() === 'ERROR' ? 'error' : 'default'}
                                     />
                                 </Box>
                                 
