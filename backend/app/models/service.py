@@ -29,7 +29,7 @@ DEFAULT_SERVICE_CATALOG: list[ServiceCatalogEntry] = [
         image="postgres:16",
         ports=[5432],
         data_mount_path="/var/lib/postgresql/data",
-        health_check_command=["pg_isready"],
+        health_check_command=["pg_isready", "-U", "postgres"],
         required_env_vars={"PGDATA": "/var/lib/postgresql/data/pgdata", "POSTGRES_PASSWORD": "changeme"},
     ),
     ServiceCatalogEntry(

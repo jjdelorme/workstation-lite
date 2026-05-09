@@ -54,7 +54,7 @@ def test_apply_service_statefulset(mock_k8s_client):
         "user-1", "my-postgres", "postgres:16", 1,
         ports=[5432], cpu="2000m", memory="8Gi",
         data_mount_path="/var/lib/postgresql/data",
-        health_check_command=["pg_isready"],
+        health_check_command=["pg_isready", "-U", "postgres"],
     )
 
     assert mock_apps.create_namespaced_stateful_set.called
@@ -104,7 +104,7 @@ def test_save_service_config(mock_k8s_client):
     manager.save_service_config(
         "user-1", "my-postgres", "postgres:16", "postgresql", [5432],
         data_mount_path="/var/lib/postgresql/data",
-        health_check_command=["pg_isready"],
+        health_check_command=["pg_isready", "-U", "postgres"],
     )
 
     assert mock_core.create_namespaced_config_map.called
@@ -114,7 +114,7 @@ def test_save_service_config(mock_k8s_client):
     assert parsed['service_type'] == "postgresql"
     assert parsed['ports'] == [5432]
     assert parsed['data_mount_path'] == "/var/lib/postgresql/data"
-    assert parsed['health_check_command'] == ["pg_isready"]
+    assert parsed['health_check_command'] == ["pg_isready", "-U", "postgres"]
 
 
 def test_get_service_config(mock_k8s_client):
@@ -127,7 +127,7 @@ def test_get_service_config(mock_k8s_client):
         "ports": [5432], "cpu": "2000m", "memory": "8Gi",
         "disk_size": "5Gi", "env_vars": {"POSTGRES_PASSWORD": "secret"},
         "data_mount_path": "/var/lib/postgresql/data",
-        "health_check_command": ["pg_isready"],
+        "health_check_command": ["pg_isready", "-U", "postgres"],
     })}
     mock_core.read_namespaced_config_map.return_value = mock_cm
 
@@ -136,7 +136,7 @@ def test_get_service_config(mock_k8s_client):
     assert config["service_type"] == "postgresql"
     assert config["env_vars"]["POSTGRES_PASSWORD"] == "secret"
     assert config["data_mount_path"] == "/var/lib/postgresql/data"
-    assert config["health_check_command"] == ["pg_isready"]
+    assert config["health_check_command"] == ["pg_isready", "-U", "postgres"]
 
 
 def test_get_service_config_default(mock_k8s_client):
@@ -227,7 +227,7 @@ def test_get_service_catalog_templates_from_configmap(mock_k8s_client):
             "service_type": "postgresql", "label": "PostgreSQL 16",
             "image": "postgres:16", "ports": [5432],
             "data_mount_path": "/var/lib/postgresql/data",
-            "health_check_command": ["pg_isready"],
+            "health_check_command": ["pg_isready", "-U", "postgres"],
             "required_env_vars": {"PGDATA": "/var/lib/postgresql/data/pgdata"},
         }),
     }
@@ -273,7 +273,7 @@ def test_catalog_endpoint(mock_get_k8s):
     mock_k8s.get_service_catalog_templates.return_value = [
         {"service_type": "postgresql", "label": "PostgreSQL 16", "image": "postgres:16",
          "ports": [5432], "data_mount_path": "/var/lib/postgresql/data",
-         "health_check_command": ["pg_isready"], "required_env_vars": {}},
+         "health_check_command": ["pg_isready", "-U", "postgres"], "required_env_vars": {}},
     ]
 
     response = client.get("/api/services/catalog")
@@ -312,7 +312,7 @@ def test_save_service_config_api(mock_get_k8s):
         "ports": [5432],
         "env_vars": {"POSTGRES_PASSWORD": "secret", "PGDATA": "/var/lib/postgresql/data/pgdata"},
         "data_mount_path": "/var/lib/postgresql/data",
-        "health_check_command": ["pg_isready"],
+        "health_check_command": ["pg_isready", "-U", "postgres"],
     })
     assert response.status_code == 200
     assert mock_k8s.save_service_config.called
@@ -355,7 +355,7 @@ def test_connect_script_api(mock_settings, mock_get_k8s):
         "ports": [5432], "cpu": "2000m", "memory": "8Gi",
         "disk_size": "5Gi", "env_vars": {},
         "data_mount_path": "/var/lib/postgresql/data",
-        "health_check_command": ["pg_isready"],
+        "health_check_command": ["pg_isready", "-U", "postgres"],
     }
 
     response = client.get("/api/services/user-1/connect/my-pg")
