@@ -3,7 +3,7 @@ FROM linuxserver/vscodium-web:latest
 # 1. Install system dependencies (as root)
 # Added openssh-server so we can configure sshd_config
 RUN apt-get update && apt-get install -y \
-    curl git wget zsh vim tmux jq build-essential unzip ripgrep ca-certificates \
+    curl git wget zsh vim tmux jq build-essential unzip ripgrep rsync ca-certificates \
     python3 python3-pip python3.12-venv golang-go fontconfig sudo locales openssh-server libvulkan1 \
     && rm -rf /var/lib/apt/lists/* && \
     echo "abc ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/abc
@@ -34,21 +34,20 @@ ENV ZSH_DISABLE_COMPFIX=true
 ENV PATH=/opt/google-cloud-sdk/bin:$PATH
 ENV CLAUDE_CODE_USE_VERTEX=1
 
-# 5. Install NVM, Node, npm, Gemini CLI, Oh My Zsh, and P10k
+# 5. Install NVM, Node, npm, Antigravity CLI (agy), Oh My Zsh, and P10k
 RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
     bash -c "source $NVM_DIR/nvm.sh && \
              nvm install 20 && \
-             nvm alias default 20 && \
-             npm install -g @google/gemini-cli" && \
+             nvm alias default 20" && \
+    curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && \
     git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
 # 6. Global Symlinks (Ensures tools are found regardless of shell login type)
 RUN bash -c "source $NVM_DIR/nvm.sh && \
     ln -sf \$(which node) /usr/local/bin/node && \
-    ln -sf \$(which npm) /usr/local/bin/npm && \
-    ln -sf \$(which gemini) /usr/local/bin/gemini"
+    ln -sf \$(which npm) /usr/local/bin/npm"
 
 # 7. Download a lean default Powerlevel10k config
 RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
@@ -191,16 +190,102 @@ if __name__ == "__main__":
 EOF
 
 RUN chmod +x /opt/orchestrator/get_tmux_context.sh && \
-    mkdir -p /custom-services.d/orchestrator && \
-    echo '#!/bin/bash' > /custom-services.d/orchestrator/run && \
-    echo 'exec s6-setuidgid abc uvicorn main:app --host 0.0.0.0 --port 8001 --app-dir /opt/orchestrator' >> /custom-services.d/orchestrator/run && \
-    chmod +x /custom-services.d/orchestrator/run
+    mkdir -p /custom-services.d && \
+    echo '#!/usr/bin/with-contenv bash' > /custom-services.d/orchestrator && \
+    echo 'exec s6-setuidgid abc uvicorn main:app --host 0.0.0.0 --port 8001 --app-dir /opt/orchestrator' >> /custom-services.d/orchestrator && \
+    chmod 755 /custom-services.d/orchestrator
+
+# 10.8. Cloud Run Instances Local-Disk + GCS Background Sync Service
+# When a GCS volume is mounted at /mnt/gcs-workspace, /home/workspace runs on fast local disk
+# and syncs incrementally to /mnt/gcs-workspace every 30s and on graceful shutdown (SIGTERM).
+RUN echo '#!/bin/bash' > /usr/local/bin/workspace-sync-now && \
+    echo 'set -euo pipefail' >> /usr/local/bin/workspace-sync-now && \
+    echo 'umask 000' >> /usr/local/bin/workspace-sync-now && \
+    echo 'if ! grep -qs " /mnt/gcs-workspace " /proc/mounts || grep -qs " /home/workspace " /proc/mounts; then exit 0; fi' >> /usr/local/bin/workspace-sync-now && \
+    echo 'if [ ! -f /run/workspace-hydrated ]; then echo "[workspace-sync] Skipping sync: /run/workspace-hydrated sentinel not found." >&2; exit 0; fi' >> /usr/local/bin/workspace-sync-now && \
+    echo 'mkdir -p -m 777 /run/workspace-sync' >> /usr/local/bin/workspace-sync-now && \
+    echo 'chmod 777 /run/workspace-sync 2>/dev/null || true' >> /usr/local/bin/workspace-sync-now && \
+    echo 'LOCK_FLAG="-n"' >> /usr/local/bin/workspace-sync-now && \
+    echo 'FULL_DELETE=0' >> /usr/local/bin/workspace-sync-now && \
+    echo 'for arg in "$@"; do' >> /usr/local/bin/workspace-sync-now && \
+    echo '  case "$arg" in' >> /usr/local/bin/workspace-sync-now && \
+    echo '    --wait) LOCK_FLAG="" ;;' >> /usr/local/bin/workspace-sync-now && \
+    echo '    --full-delete) FULL_DELETE=1 ;;' >> /usr/local/bin/workspace-sync-now && \
+    echo '  esac' >> /usr/local/bin/workspace-sync-now && \
+    echo 'done' >> /usr/local/bin/workspace-sync-now && \
+    echo 'exec 9>/run/workspace-sync/lock' >> /usr/local/bin/workspace-sync-now && \
+    echo 'if ! flock ${LOCK_FLAG} 9; then exit 0; fi' >> /usr/local/bin/workspace-sync-now && \
+    echo '(cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "lost+found" \) -prune -o -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest.new' >> /usr/local/bin/workspace-sync-now && \
+    echo 'if [ -f /run/workspace-sync/manifest ]; then' >> /usr/local/bin/workspace-sync-now && \
+    echo '  comm -z -23 /run/workspace-sync/manifest /run/workspace-sync/manifest.new > /run/workspace-sync/deleted.list' >> /usr/local/bin/workspace-sync-now && \
+    echo '  if [ -s /run/workspace-sync/deleted.list ]; then' >> /usr/local/bin/workspace-sync-now && \
+    echo '    (cd /mnt/gcs-workspace && xargs -0 -r -P 16 rm -f -- < /run/workspace-sync/deleted.list 2>/dev/null || true)' >> /usr/local/bin/workspace-sync-now && \
+    echo '    (cd /mnt/gcs-workspace && LC_ALL=C sort -z -r /run/workspace-sync/deleted.list | xargs -0 -r rm -rf --)' >> /usr/local/bin/workspace-sync-now && \
+    echo '  fi' >> /usr/local/bin/workspace-sync-now && \
+    echo '  rm -f /run/workspace-sync/deleted.list' >> /usr/local/bin/workspace-sync-now && \
+    echo 'fi' >> /usr/local/bin/workspace-sync-now && \
+    echo 'DELETE_FLAG=""' >> /usr/local/bin/workspace-sync-now && \
+    echo 'if [ "$FULL_DELETE" -eq 1 ]; then DELETE_FLAG="--delete"; fi' >> /usr/local/bin/workspace-sync-now && \
+    echo 'sync_item() {' >> /usr/local/bin/workspace-sync-now && \
+    echo '  local rc=0' >> /usr/local/bin/workspace-sync-now && \
+    echo '  rsync -rltDO --inplace --no-perms --no-owner --no-group ${DELETE_FLAG} --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="lost+found" "$1" /mnt/gcs-workspace/ || rc=$?' >> /usr/local/bin/workspace-sync-now && \
+    echo '  [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]' >> /usr/local/bin/workspace-sync-now && \
+    echo '}' >> /usr/local/bin/workspace-sync-now && \
+    echo 'export -f sync_item' >> /usr/local/bin/workspace-sync-now && \
+    echo 'export DELETE_FLAG' >> /usr/local/bin/workspace-sync-now && \
+    echo 'find /home/workspace -mindepth 1 -maxdepth 1 ! -name "node_modules" ! -name "venv" ! -name ".venv" ! -name "__pycache__" ! -name ".pytest_cache" ! -name ".mypy_cache" ! -name ".ruff_cache" ! -name ".cache" ! -name ".gemini" ! -name ".npm" ! -name ".tmp" ! -name "lost+found" -print0 | xargs -0 -r -P 16 -I {} bash -c "sync_item \"\$1\"" _ "{}"' >> /usr/local/bin/workspace-sync-now && \
+    echo 'mv -f /run/workspace-sync/manifest.new /run/workspace-sync/manifest' >> /usr/local/bin/workspace-sync-now && \
+    echo 'chmod 666 /run/workspace-sync/manifest /run/workspace-sync/lock 2>/dev/null || true' >> /usr/local/bin/workspace-sync-now && \
+    chmod 755 /usr/local/bin/workspace-sync-now
+
+RUN mkdir -p /custom-services.d && \
+    echo '#!/usr/bin/with-contenv bash' > /custom-services.d/workspace-sync && \
+    echo 'SYNC_INTERVAL="${WORKSPACE_SYNC_INTERVAL:-30}"' >> /custom-services.d/workspace-sync && \
+    echo 'if ! grep -qs " /mnt/gcs-workspace " /proc/mounts || grep -qs " /home/workspace " /proc/mounts; then' >> /custom-services.d/workspace-sync && \
+    echo '  echo "[workspace-sync] /mnt/gcs-workspace not mounted (or /home/workspace is a volume mount); background sync daemon idle."' >> /custom-services.d/workspace-sync && \
+    echo '  exec sleep infinity' >> /custom-services.d/workspace-sync && \
+    echo 'fi' >> /custom-services.d/workspace-sync && \
+    echo 'echo "[workspace-sync] Starting background sync daemon (/home/workspace -> /mnt/gcs-workspace every ${SYNC_INTERVAL}s)..."' >> /custom-services.d/workspace-sync && \
+    echo 'shutdown_sync() {' >> /custom-services.d/workspace-sync && \
+    echo '  echo "[workspace-sync] Caught termination signal, flushing final changes to /mnt/gcs-workspace..."' >> /custom-services.d/workspace-sync && \
+    echo '  /usr/local/bin/workspace-sync-now --wait || true' >> /custom-services.d/workspace-sync && \
+    echo '  echo "[workspace-sync] Final sync complete."' >> /custom-services.d/workspace-sync && \
+    echo '  exit 0' >> /custom-services.d/workspace-sync && \
+    echo '}' >> /custom-services.d/workspace-sync && \
+    echo 'trap shutdown_sync SIGTERM SIGINT SIGHUP' >> /custom-services.d/workspace-sync && \
+    echo 'while true; do' >> /custom-services.d/workspace-sync && \
+    echo '  sleep "${SYNC_INTERVAL}" &' >> /custom-services.d/workspace-sync && \
+    echo '  SLEEP_PID=$!' >> /custom-services.d/workspace-sync && \
+    echo '  wait "${SLEEP_PID}" || true' >> /custom-services.d/workspace-sync && \
+    echo '  /usr/local/bin/workspace-sync-now || true' >> /custom-services.d/workspace-sync && \
+    echo 'done' >> /custom-services.d/workspace-sync && \
+    chmod 755 /custom-services.d/workspace-sync
 
 # 11. Runtime Initialization Script (runs on every container start via S6)
-# Fixes ownership after PVC mount, propagates GCP env vars, activates gcloud
+# Hydrates /home/workspace from /mnt/gcs-workspace (if mounted), fixes ownership and .ssh permissions,
+# propagates GCP env vars, and activates gcloud
 RUN mkdir -p /custom-cont-init.d && \
     echo '#!/bin/bash' > /custom-cont-init.d/99-setup-user && \
-    echo 'chown abc:abc /home/workspace' >> /custom-cont-init.d/99-setup-user && \
+    echo 'mkdir -p /home/workspace' >> /custom-cont-init.d/99-setup-user && \
+    echo 'mkdir -p -m 777 /run/workspace-sync' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chmod 777 /run/workspace-sync 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
+    echo 'if grep -qs " /mnt/gcs-workspace " /proc/mounts && ! grep -qs " /home/workspace " /proc/mounts; then' >> /custom-cont-init.d/99-setup-user && \
+    echo '  echo "[workspace-init] Hydrating local /home/workspace from /mnt/gcs-workspace (parallel rsync)..."' >> /custom-cont-init.d/99-setup-user && \
+    echo '  if (set -o pipefail; find /mnt/gcs-workspace -mindepth 1 -maxdepth 1 -print0 | xargs -0 -r -P 16 -I {} rsync -a --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="lost+found" "{}" /home/workspace/); then' >> /custom-cont-init.d/99-setup-user && \
+    echo '    (cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "lost+found" \) -prune -o -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest' >> /custom-cont-init.d/99-setup-user && \
+    echo '    chmod 666 /run/workspace-sync/manifest 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
+    echo '    touch /run/workspace-hydrated' >> /custom-cont-init.d/99-setup-user && \
+    echo '    echo "[workspace-init] Hydration complete."' >> /custom-cont-init.d/99-setup-user && \
+    echo '  else' >> /custom-cont-init.d/99-setup-user && \
+    echo '    echo "[workspace-init] ERROR: Hydration failed; skipping /run/workspace-hydrated sentinel to protect GCS bucket." >&2' >> /custom-cont-init.d/99-setup-user && \
+    echo '  fi' >> /custom-cont-init.d/99-setup-user && \
+    echo 'fi' >> /custom-cont-init.d/99-setup-user && \
+    echo 'chown -R abc:abc /home/workspace' >> /custom-cont-init.d/99-setup-user && \
+    echo 'if [ -d /home/workspace/.ssh ]; then' >> /custom-cont-init.d/99-setup-user && \
+    echo '  chmod 700 /home/workspace/.ssh' >> /custom-cont-init.d/99-setup-user && \
+    echo '  chmod 600 /home/workspace/.ssh/* 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
+    echo '  chmod 644 /home/workspace/.ssh/*.pub /home/workspace/.ssh/known_hosts /home/workspace/.ssh/config 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
+    echo 'fi' >> /custom-cont-init.d/99-setup-user && \
     echo 'mkdir -p /home/workspace/.cache/oh-my-zsh /home/workspace/.cache/p10k-abc' >> /custom-cont-init.d/99-setup-user && \
     echo 'chown -R abc:abc /home/workspace/.cache' >> /custom-cont-init.d/99-setup-user && \
     echo 'touch /home/workspace/.zsh_history /home/workspace/.zshrc' >> /custom-cont-init.d/99-setup-user && \
@@ -224,9 +309,10 @@ RUN mkdir -p /custom-cont-init.d && \
     echo 'chown -R abc:abc /opt/oh-my-zsh /opt/oh-my-zsh-custom /opt/nvm' >> /custom-cont-init.d/99-setup-user && \
     echo 'chmod -R g-w,o-w /opt/oh-my-zsh /opt/oh-my-zsh-custom' >> /custom-cont-init.d/99-setup-user && \
     echo 'chmod g-w,o-w /home/workspace' >> /custom-cont-init.d/99-setup-user && \
-    chmod +x /custom-cont-init.d/99-setup-user
+    chmod 755 /custom-cont-init.d/99-setup-user
 
 # Crucial: Must be root for S6 init to start. 
 USER root
+ENV S6_SERVICES_GRACETIME=8000
 ENV HOME=/home/workspace
 WORKDIR /home/workspace
