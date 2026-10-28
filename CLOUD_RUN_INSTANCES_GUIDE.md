@@ -13,7 +13,7 @@ This guide documents how to run **Workstation Lite** container images on **Googl
 | **Local Root Disk** | Ephemeral (except mounted PVCs) | **Ephemeral (`tmpfs`/overlay)** — wiped on `stop`, `restart`, or `update` |
 | **Active `/home/workspace`** | GCE Zonal Persistent Disk (`standard-rwo` PVC, `ext4`) | **Fast Local Container Filesystem** hydrated on startup from `/mnt/gcs-workspace` |
 | **Persistent Backing Store** | GCE Zonal Persistent Disk (`pd.csi.storage.gke.io`) | **Cloud Storage FUSE** (`type=cloud-storage`) mounted at `/mnt/gcs-workspace` + background `rsync` |
-| **Incoming SSH Auth** | OpenSSH (`sshd`) or `kubectl exec` | Cloud Run native IAM-authenticated WebSocket tunnel (`--enable-ssh`) |
+| **Incoming SSH Auth** | OpenSSH (`sshd`) or `kubectl exec` | Cloud Run native IAM-authenticated WebSocket tunnel (enabled by default in `gcloud 591.0.0+`) |
 | **Console Location** | Kubernetes Engine > Workloads | **Cloud Run > Instances** tab (`https://console.cloud.google.com/run/instances`) |
 
 > [!IMPORTANT]
@@ -24,7 +24,7 @@ This guide documents how to run **Workstation Lite** container images on **Googl
 ## 2. Creating & Managing a Cloud Run Instance
 
 ### Prerequisites
-Ensure `gcloud` is up to date (`564.0.0+`) and the `alpha` component is installed:
+Ensure `gcloud` is up to date (`591.0.0+`) and the `alpha` component is installed:
 ```bash
 gcloud components update
 gcloud components install alpha
@@ -47,6 +47,7 @@ gcloud storage buckets add-iam-policy-binding gs://jasondel-cloudrun10-workstati
   --project=jasondel-cloudrun10
 
 # 3. Create the Cloud Run Instance with GCS mounted at /mnt/gcs-workspace
+# (Note: SSH is enabled by default in gcloud 591.0.0+; --enable-ssh is no longer needed)
 gcloud alpha run instances create vs-codium29-instance \
   --image=us-central1-docker.pkg.dev/jasondel-cloudrun10/workstation-images/user-1-vs-codium30:latest \
   --project=jasondel-cloudrun10 \
@@ -54,7 +55,6 @@ gcloud alpha run instances create vs-codium29-instance \
   --port=8000 \
   --cpu=4 \
   --memory=16Gi \
-  --enable-ssh \
   --no-invoker-iam-check \
   --set-env-vars="PUID=1000,PGID=1000,GOOGLE_CLOUD_PROJECT=jasondel-cloudrun10,WORKSPACE_SYNC_INTERVAL=30" \
   --add-volume=name=workspace,type=cloud-storage,bucket=jasondel-cloudrun10-workstation-workspace,mount-options="uid=1000;gid=1000;file-mode=0700;dir-mode=0700;implicit-dirs;stat-cache-max-size-mb=-1;type-cache-max-size-mb=-1;metadata-cache-ttl-secs=120" \
@@ -138,7 +138,7 @@ The [Cloud Run Instances Cloud Storage volume mounts documentation](https://docs
      ```
 3. **Why Local Manifest Deletion Tracking + 16x Parallel `rsync -rltDO --inplace --no-perms --no-owner --no-group` Is Used:**
    * **Avoiding Temp-File Rename Overhead (`--inplace`):** Standard `rsync -a` writes every updated file to a temporary `.filename.XXXXXX` object and then renames it over `filename`. On GCS FUSE, a `rename()` triggers a server-side GCS `CopyObject` + `DeleteObject`, doubling the API requests and write latency (`2.61s` vs `1.26s` for 10 files). Passing `--inplace` writes directly to the target object in a single `close()`/upload.
-   * **Avoiding GCS FUSE `readdir()` Scans via Local Manifest Diffing (`1.3s` vs `42.8s`):** In GCS FUSE, `stat-cache` and `type-cache` only cache `lstat()` (`LookUpInode`/`GetInodeAttributes`), *not* directory listings (`readdir()` / `Objects: list`). Running a single-threaded `rsync --delete` forces `rsync` to call `readdir()` on all ~1,400 directories in `/mnt/gcs-workspace` sequentially (~30ms HTTP call per directory = **42.8 seconds** per sync!). Instead, `workspace-sync-now` scans local `/home/workspace` in **~50ms** (`cd /home/workspace && find . ... -print0 | sort -z`), diffs against the previous manifest (`/run/workspace-sync/manifest`) with `comm -z -23` to unlink any locally deleted files/directories directly on `/mnt/gcs-workspace`, and runs 16 parallel `rsync -rltDO --inplace` workers that hit GCS FUSE's in-memory `stat-cache` in **~1.3 seconds** total.
+   * **Avoiding GCS FUSE `readdir()` Scans via Local Manifest Diffing (`1.3s` vs `42.8s`):** In GCS FUSE, `stat-cache` and `type-cache` only cache `lstat()` (`LookUpInode`/`GetInodeAttributes`), *not* directory listings (`readdir()` / `Objects: list`). Running a single-threaded `rsync --delete` forces `rsync` to call `readdir()` on all ~1,400 directories in `/mnt/gcs-workspace` sequentially (~30ms HTTP call per directory = **42.8 seconds** per sync!). Instead, `workspace-sync-now` scans local `/home/workspace` in **~50ms** (`cd /home/workspace && find . ... -print0 | LC_ALL=C sort -z`), diffs against the previous manifest (`/run/workspace-sync/manifest`) with `LC_ALL=C comm -z -23` to unlink any locally deleted files/directories directly on `/mnt/gcs-workspace`, and runs 16 parallel `rsync -rltDO --inplace` workers that hit GCS FUSE's in-memory `stat-cache` in **~1.3 seconds** total.
    * **Skipping Redundant FUSE Metadata Calls (`-O --no-perms --no-owner --no-group`):** Because `/mnt/gcs-workspace` is mounted with `uid=1000;gid=1000;file-mode=0700;dir-mode=0700`, skipping redundant `chown`/`chmod` and directory mtime (`-O`) syscalls on FUSE avoids unnecessary metadata round-trips while preserving file modification timestamps (`-t`) and symlinks (`-l`).
    * **Exclusions:** Heavy regenerable directories (`node_modules`, `venv`, `.venv`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.cache`, `.gemini`, `.npm`, `.tmp`, `lost+found`) stay strictly on fast local disk and are excluded from GCS sync.
 
@@ -252,3 +252,19 @@ kubectl exec -n user-1 user27-0 -- gcloud storage rsync -r \
   --exclude="\.gemini/.*|\.cache/.*|lost\+found/.*|libpod/.*|\.npm/.*|\.gsutil/.*|\.local/lib/.*|\.local/share/.*|\.tmp/.*|.*/\.gemini/.*|.*/\.cache/.*|.*node_modules/.*|.*venv/.*|.*\.venv/.*|.*__pycache__/.*" \
   /home/workspace gs://jasondel-cloudrun10-workstation-workspace
 ```
+
+---
+
+## 6. Troubleshooting
+
+### A. `ERROR: (gcloud.alpha.run.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend'] (Failed to connect to port 22)`
+* **Cause:** Cloud Run's SSH proxy (`wss://<region>.ssh.run.app`) rejects tunnel connections until the container finishes S6 initialization (`99-setup-user`) and binds its readiness port (`8000`). Immediately after `create` or `start`, `99-setup-user` spends ~45–90 seconds hydrating `/home/workspace` from `/mnt/gcs-workspace`.
+* **Fix:** Check startup progress via `gcloud alpha run instances logs read vs-codium29-instance --region=us-east4 --project=jasondel-cloudrun10 --limit=25` and wait for `[workspace-init] Hydration complete.` and `[ls.io-init] done.` before running `gcloud alpha run instances ssh`.
+
+### B. `Instance [...] could not be started: The service has encountered an internal error. Please try again later` (`ResourcesAvailable=False`)
+* **Cause:** Stopped Cloud Run Instances created under older Alpha/Preview backend revisions can occasionally fail in Cloud Run's control plane when resuming cached container resources after backend rollouts.
+* **Fix:** Because the root filesystem of a stopped instance is already ephemeral and persistent workspace files live in `gs://jasondel-cloudrun10-workstation-workspace`, safely delete and recreate the instance with the same name and GCS volume mount (Section 2). All workspace data hydrates back automatically and the instance URL remains identical.
+
+### C. `unrecognized arguments: --enable-ssh`
+* **Cause:** Starting in Google Cloud SDK `591.0.0+`, Cloud Run Instances sets `run.googleapis.com/ssh-enabled: 'true'` by default and removed the `--enable-ssh` CLI flag.
+* **Fix:** Omit `--enable-ssh` from `gcloud alpha run instances create` and `update` commands.

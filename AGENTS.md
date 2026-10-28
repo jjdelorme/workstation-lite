@@ -20,6 +20,16 @@ This file provides comprehensive guidance for AI agents (Claude, Gemini, etc.) w
     * **Stored as**: A K8s StatefulSet (`svc-` prefix) + PVC + ClusterIP Service.
     * **Lifecycle**: Create (save config) -> Start -> Stop -> Delete.
     * **Connectivity**: ClusterIP services provide in-cluster DNS (`svc-<name>:<port>`). Connect/exec scripts generate `kubectl port-forward` and `kubectl exec` commands for local access.
+5. **Cloud Run Instances (Alternative Workstation Compute)**: Workstation container images (`templates/Dockerfile.template`) can also run directly on **Google Cloud Run Instances** (`gcloud alpha run instances`, `gcloud 591.0.0+`) instead of GKE. See `CLOUD_RUN_INSTANCES_GUIDE.md` for full details.
+    * **Storage Architecture**: Mounts GCS FUSE (`type=cloud-storage`) at `/mnt/gcs-workspace`, hydrates `/home/workspace` onto fast local container disk at startup (`99-setup-user`), and runs a background S6 `rsync` service (`workspace-sync`) every 30s + on `SIGTERM`.
+    * **Active Instance**: `vs-codium29-instance` in region `us-east4` (project `jasondel-cloudrun10`, backing bucket `gs://jasondel-cloudrun10-workstation-workspace`).
+    * **Lifecycle & SSH**:
+      ```bash
+      gcloud alpha run instances start vs-codium29-instance --region=us-east4 --project=jasondel-cloudrun10
+      gcloud alpha run instances ssh vs-codium29-instance --region=us-east4 --project=jasondel-cloudrun10
+      # Once connected (logs in as root), switch to workstation user: su - abc
+      gcloud alpha run instances stop vs-codium29-instance --region=us-east4 --project=jasondel-cloudrun10
+      ```
 
 ## Architecture
 - **Monolith Deployment:** The FastAPI backend serves the React SPA from its `static` directory. Frontend assets are built and copied there via Dockerfile multi-stage build.
@@ -33,6 +43,8 @@ This file provides comprehensive guidance for AI agents (Claude, Gemini, etc.) w
 - `backend/app/models/`: Pydantic models for request/response validation.
 - `backend/app/core/config.py`: App configuration via pydantic-settings.
 - `frontend/src/`: React 19 + TypeScript + MUI + React Router application. Monaco Editor is used for in-browser Dockerfile editing.
+- `templates/Dockerfile.template`: Base workstation image template (supports both GKE PVC mounts and Cloud Run Instances GCS FUSE + local-disk sync).
+- `CLOUD_RUN_INSTANCES_GUIDE.md`: Complete guide for provisioning, connecting to (SSH / VS Code / Zed), and troubleshooting Cloud Run Instances.
 - `plans/`: Project roadmaps, phase plans, and audit reports.
 
 ## Building and Running

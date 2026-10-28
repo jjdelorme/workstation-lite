@@ -49,12 +49,14 @@ RUN bash -c "source $NVM_DIR/nvm.sh && \
     ln -sf \$(which node) /usr/local/bin/node && \
     ln -sf \$(which npm) /usr/local/bin/npm"
 
-# 7. Download a lean default Powerlevel10k config
-RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh
+# 7. Download a lean default Powerlevel10k config (for new users and root SSH sessions)
+RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/powerlevel10k/master/config/p10k-lean.zsh && \
+    cp /etc/skel/.p10k.zsh /root/.p10k.zsh
 
 # 8. Create Global ZSH and Tmux Configurations (PVC Proof)
 RUN mkdir -p /etc/zsh && \
     echo 'unsetopt WARN_CREATE_GLOBAL' > /etc/zsh/zshrc && \
+    echo 'POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true' >> /etc/zsh/zshrc && \
     echo '[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh' >> /etc/zsh/zshrc && \
     echo 'export LANG=en_US.UTF-8' >> /etc/zsh/zshrc && \
     echo 'export LC_ALL=en_US.UTF-8' >> /etc/zsh/zshrc && \
@@ -217,7 +219,7 @@ RUN echo '#!/bin/bash' > /usr/local/bin/workspace-sync-now && \
     echo 'if ! flock ${LOCK_FLAG} 9; then exit 0; fi' >> /usr/local/bin/workspace-sync-now && \
     echo '(cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "lost+found" \) -prune -o -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest.new' >> /usr/local/bin/workspace-sync-now && \
     echo 'if [ -f /run/workspace-sync/manifest ]; then' >> /usr/local/bin/workspace-sync-now && \
-    echo '  comm -z -23 /run/workspace-sync/manifest /run/workspace-sync/manifest.new > /run/workspace-sync/deleted.list' >> /usr/local/bin/workspace-sync-now && \
+    echo '  LC_ALL=C comm -z -23 /run/workspace-sync/manifest /run/workspace-sync/manifest.new > /run/workspace-sync/deleted.list' >> /usr/local/bin/workspace-sync-now && \
     echo '  if [ -s /run/workspace-sync/deleted.list ]; then' >> /usr/local/bin/workspace-sync-now && \
     echo '    (cd /mnt/gcs-workspace && xargs -0 -r -P 16 rm -f -- < /run/workspace-sync/deleted.list 2>/dev/null || true)' >> /usr/local/bin/workspace-sync-now && \
     echo '    (cd /mnt/gcs-workspace && LC_ALL=C sort -z -r /run/workspace-sync/deleted.list | xargs -0 -r rm -rf --)' >> /usr/local/bin/workspace-sync-now && \
