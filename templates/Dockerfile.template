@@ -12,6 +12,15 @@ RUN apt-get update && apt-get install -y \
 RUN locale-gen en_US.UTF-8                                                                                                                                                                                                  
 ENV LANG=en_US.UTF-8                                                                                                                                                                                                        
 ENV LC_ALL=en_US.UTF-8                                                                                                                                                                                                      
+
+# 1.5 Install GitHub CLI
+RUN mkdir -p -m 755 /etc/apt/keyrings && \
+    wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y gh && \
+    rm -rf /var/lib/apt/lists/*
                                                                                                                                                                                                                                
 # 2. Install Fonts
 RUN mkdir -p /usr/share/fonts/truetype/meslo && \
@@ -39,8 +48,10 @@ RUN mkdir -p $NVM_DIR $OH_MY_ZSH $ZSH_CUSTOM && \
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
     bash -c "source $NVM_DIR/nvm.sh && \
              nvm install 20 && \
-             nvm alias default 20" && \
-    curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && \
+             nvm alias default 20 && \
+             npm install -g @openai/codex opencode-ai@latest" && \
+    HOME=/tmp curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && \
+    chmod 755 /usr/local/bin/agy && rm -rf /tmp/.cache && \
     git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git $OH_MY_ZSH && \
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $ZSH_CUSTOM/themes/powerlevel10k
 
@@ -273,7 +284,8 @@ RUN mkdir -p /custom-cont-init.d && \
     echo 'chmod 777 /run/workspace-sync 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
     echo 'if grep -qs " /mnt/gcs-workspace " /proc/mounts && ! grep -qs " /home/workspace " /proc/mounts; then' >> /custom-cont-init.d/99-setup-user && \
     echo '  echo "[workspace-init] Hydrating local /home/workspace from /mnt/gcs-workspace (parallel rsync)..."' >> /custom-cont-init.d/99-setup-user && \
-    echo '  if (set -o pipefail; find /mnt/gcs-workspace -mindepth 1 -maxdepth 1 -print0 | xargs -0 -r -P 16 -I {} rsync -a --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="lost+found" "{}" /home/workspace/); then' >> /custom-cont-init.d/99-setup-user && \
+    echo '  if (set -o pipefail; find /mnt/gcs-workspace -mindepth 1 -maxdepth 1 ! -name "node_modules" ! -name "venv" ! -name ".venv" ! -name "__pycache__" ! -name ".pytest_cache" ! -name ".mypy_cache" ! -name ".ruff_cache" ! -name ".cache" ! -name ".gemini" ! -name ".npm" ! -name ".tmp" ! -name "lost+found" -print0 | xargs -0 -r -P 16 -I {} rsync -a --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="lost+found" "{}" /home/workspace/); then' >> /custom-cont-init.d/99-setup-user && \
+    echo '    for g in /home/workspace/*/.git; do [ -d "$g" ] || continue; r="${g%/.git}"; chmod -R a-x,u+rwX,go+rX "$r"; git -c safe.directory="*" -C "$r" ls-files -s 2>/dev/null | awk '\''$1 == "100755" {print substr($0, 51)}'\'' | xargs -r -I {} chmod +x "$r/{}"; done' >> /custom-cont-init.d/99-setup-user && \
     echo '    (cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "lost+found" \) -prune -o -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest' >> /custom-cont-init.d/99-setup-user && \
     echo '    chmod 666 /run/workspace-sync/manifest 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
     echo '    touch /run/workspace-hydrated' >> /custom-cont-init.d/99-setup-user && \

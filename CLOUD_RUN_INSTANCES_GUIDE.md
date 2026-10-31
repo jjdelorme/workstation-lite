@@ -40,22 +40,27 @@ gcloud storage buckets create gs://jasondel-cloudrun10-workstation-workspace \
   --location=us-east4 \
   --uniform-bucket-level-access
 
-# 2. Grant the Cloud Run service account access to the bucket (required for GCS FUSE mount)
-gcloud storage buckets add-iam-policy-binding gs://jasondel-cloudrun10-workstation-workspace \
-  --member="serviceAccount:1076242320305-compute@developer.gserviceaccount.com" \
-  --role="roles/storage.admin" \
+# 2. Create a dedicated, least-privilege Service Account for the workstation
+gcloud iam service-accounts create ws-vscodium29-sa \
+  --display-name="Workstation vs-codium29 Service Account" \
   --project=jasondel-cloudrun10
 
-# 3. Create the Cloud Run Instance with GCS mounted at /mnt/gcs-workspace
+# 3. Grant ONLY object-level read/write access on this specific workspace bucket
+gcloud storage buckets add-iam-policy-binding gs://jasondel-cloudrun10-workstation-workspace \
+  --member="serviceAccount:ws-vscodium29-sa@jasondel-cloudrun10.iam.gserviceaccount.com" \
+  --role="roles/storage.objectUser" \
+  --project=jasondel-cloudrun10
+
+# 4. Create the Cloud Run Instance running as the dedicated Service Account
 # (Note: SSH is enabled by default in gcloud 591.0.0+; --enable-ssh is no longer needed)
 gcloud alpha run instances create vs-codium29-instance \
   --image=us-central1-docker.pkg.dev/jasondel-cloudrun10/workstation-images/user-1-vs-codium30:latest \
   --project=jasondel-cloudrun10 \
   --region=us-east4 \
+  --service-account=ws-vscodium29-sa@jasondel-cloudrun10.iam.gserviceaccount.com \
   --port=8000 \
   --cpu=4 \
   --memory=16Gi \
-  --no-invoker-iam-check \
   --set-env-vars="PUID=1000,PGID=1000,GOOGLE_CLOUD_PROJECT=jasondel-cloudrun10,WORKSPACE_SYNC_INTERVAL=30" \
   --add-volume=name=workspace,type=cloud-storage,bucket=jasondel-cloudrun10-workstation-workspace,mount-options="uid=1000;gid=1000;file-mode=0700;dir-mode=0700;implicit-dirs;stat-cache-max-size-mb=-1;type-cache-max-size-mb=-1;metadata-cache-ttl-secs=120" \
   --add-volume-mount=volume=workspace,mount-path=/mnt/gcs-workspace
@@ -75,6 +80,88 @@ gcloud alpha run instances start vs-codium29-instance --region=us-east4 --projec
 # Restart a running instance
 gcloud alpha run instances restart vs-codium29-instance --region=us-east4 --project=jasondel-cloudrun10 --quiet
 ```
+
+### Security & IAM Hardening Playbook (Isolating the Backing GCS Bucket)
+
+> [!WARNING]
+> **Never use the Default Compute Engine Service Account (`<project-number>-compute@developer.gserviceaccount.com`) for a workstation's backing GCS bucket.**
+> Because the workspace bucket stores sensitive credentials (`~/.ssh` private keys, git tokens, shell history, and source code), granting bucket access to the default Compute Engine service account means **every** GCE VM, GKE node, Cloud Run service, or Cloud Build job using the default identity in the project can read or overwrite your workspace.
+
+Follow this step-by-step playbook to lock down an existing Cloud Run Instance and its backing GCS bucket to a dedicated, least-privilege identity:
+
+#### Step 1: Audit Current Bucket IAM Policy & Instance Identity
+Check which principals currently have access to the workspace bucket and which service account the instance is running under:
+```bash
+# Inspect bucket IAM bindings
+gcloud storage buckets get-iam-policy gs://jasondel-cloudrun10-workstation-workspace \
+  --project=jasondel-cloudrun10
+
+# Inspect the Cloud Run Instance's active service account
+gcloud alpha run instances describe vs-codium29-instance \
+  --region=us-east4 \
+  --project=jasondel-cloudrun10 \
+  --format="value(spec.serviceAccountName)"
+```
+
+#### Step 2: Create a Dedicated Per-Workstation Service Account
+Create a service account scoped exclusively to this workstation instance:
+```bash
+gcloud iam service-accounts create ws-vscodium29-sa \
+  --display-name="Workstation vs-codium29 Service Account" \
+  --description="Dedicated least-privilege identity for Cloud Run Instance vs-codium29-instance" \
+  --project=jasondel-cloudrun10
+```
+
+#### Step 3: Grant Least-Privilege Bucket & Optional Vertex AI Permissions
+1. **Bucket Object Access (`roles/storage.objectUser`):** GCS FUSE only needs to list, read, write, and delete objects inside the bucket. Unlike `roles/storage.admin`, `roles/storage.objectUser` cannot delete the bucket itself or modify bucket IAM policies:
+   ```bash
+   gcloud storage buckets add-iam-policy-binding gs://jasondel-cloudrun10-workstation-workspace \
+     --member="serviceAccount:ws-vscodium29-sa@jasondel-cloudrun10.iam.gserviceaccount.com" \
+     --role="roles/storage.objectUser" \
+     --project=jasondel-cloudrun10
+   ```
+2. **Optional — Vertex AI Access (`roles/aiplatform.user`):** Because `templates/Dockerfile.template` sets `CLAUDE_CODE_USE_VERTEX=1`, grant `roles/aiplatform.user` on the project if you use Claude Code or Gemini via Application Default Credentials (ADC) inside the container:
+   ```bash
+   gcloud projects add-iam-policy-binding jasondel-cloudrun10 \
+     --member="serviceAccount:ws-vscodium29-sa@jasondel-cloudrun10.iam.gserviceaccount.com" \
+     --role="roles/aiplatform.user" \
+     --condition=None
+   ```
+
+#### Step 4: Bind the Dedicated Service Account & Enforce IAM Invoker Checks on the Instance
+Update the Cloud Run Instance to run under the dedicated service account and require Cloud Run IAM authentication on its HTTP port (`8000` for VSCodium Web):
+```bash
+gcloud alpha run instances update vs-codium29-instance \
+  --service-account=ws-vscodium29-sa@jasondel-cloudrun10.iam.gserviceaccount.com \
+  --invoker-iam-check \
+  --region=us-east4 \
+  --project=jasondel-cloudrun10
+```
+*(Note: Keep `--invoker-iam-check` enabled so port `8000` is not publicly accessible on the internet. SSH connections via `gcloud alpha run instances ssh` and VS Code / Zed always authenticate via Cloud Run IAM regardless.)*
+
+#### Step 5: Revoke the Default Compute Engine Service Account from the Bucket
+Once the instance is running with `ws-vscodium29-sa`, remove the shared default Compute Engine service account binding from the workspace bucket:
+```bash
+gcloud storage buckets remove-iam-policy-binding gs://jasondel-cloudrun10-workstation-workspace \
+  --member="serviceAccount:1076242320305-compute@developer.gserviceaccount.com" \
+  --role="roles/storage.admin" \
+  --project=jasondel-cloudrun10
+```
+
+#### Step 6: Verify the Lockdown
+1. Confirm the default Compute Engine SA is no longer listed on the bucket:
+   ```bash
+   gcloud storage buckets get-iam-policy gs://jasondel-cloudrun10-workstation-workspace \
+     --project=jasondel-cloudrun10
+   ```
+2. Check startup logs to confirm GCS FUSE mounted cleanly and hydration succeeded under the new service account:
+   ```bash
+   gcloud alpha run instances logs read vs-codium29-instance \
+     --region=us-east4 \
+     --project=jasondel-cloudrun10 \
+     --limit=25
+   ```
+   Look for `[workspace-init] Hydration complete.` and `[workspace-sync] Starting background sync daemon`.
 
 ---
 
