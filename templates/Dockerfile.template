@@ -66,6 +66,25 @@ RUN wget -q -O /etc/skel/.p10k.zsh https://raw.githubusercontent.com/romkatv/pow
 
 # 8. Create Global ZSH and Tmux Configurations (PVC Proof)
 RUN mkdir -p /etc/zsh && \
+    echo 'if [[ $EUID -eq 0 && "$(cat /proc/$PPID/comm 2>/dev/null)" == "nsenter.sh" && -z "$_CLOUDRUN_SSH_ABC" && -z "$LC_SSH_ROOT" ]]; then' > /etc/zsh/zshenv && \
+    echo '  export _CLOUDRUN_SSH_ABC=1' >> /etc/zsh/zshenv && \
+    echo '  export HOME=/home/workspace' >> /etc/zsh/zshenv && \
+    echo '  export USER=abc' >> /etc/zsh/zshenv && \
+    echo '  export LOGNAME=abc' >> /etc/zsh/zshenv && \
+    echo '  export PATH="/home/workspace/.local/bin:/opt/nvm/versions/node/$(ls /opt/nvm/versions/node 2>/dev/null | tail -n 1)/bin:/opt/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' >> /etc/zsh/zshenv && \
+    echo '  cd /home/workspace 2>/dev/null || true' >> /etc/zsh/zshenv && \
+    echo '  if [[ -n "$SSH_ORIGINAL_COMMAND" ]]; then' >> /etc/zsh/zshenv && \
+    echo '    _cmd="$SSH_ORIGINAL_COMMAND"' >> /etc/zsh/zshenv && \
+    echo '    if [[ ( "$_cmd" == scp || "$_cmd" == scp\ * ) && -f "/.google_ssh/tools/scp" ]]; then' >> /etc/zsh/zshenv && \
+    echo '      _cmd="/.google_ssh/tools/${_cmd}"' >> /etc/zsh/zshenv && \
+    echo '    elif [[ ( "$_cmd" == /tools/sftp-server || "$_cmd" == /tools/sftp-server\ * ) && -f "/.google_ssh/tools/sftp-server" ]]; then' >> /etc/zsh/zshenv && \
+    echo '      _cmd="/.google_ssh${_cmd}"' >> /etc/zsh/zshenv && \
+    echo '    fi' >> /etc/zsh/zshenv && \
+    echo '    exec /usr/bin/s6-setuidgid abc /bin/zsh -c "$_cmd"' >> /etc/zsh/zshenv && \
+    echo '  else' >> /etc/zsh/zshenv && \
+    echo '    exec /usr/bin/s6-setuidgid abc /bin/zsh -l' >> /etc/zsh/zshenv && \
+    echo '  fi' >> /etc/zsh/zshenv && \
+    echo 'fi' >> /etc/zsh/zshenv && \
     echo 'unsetopt WARN_CREATE_GLOBAL' > /etc/zsh/zshrc && \
     echo 'POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true' >> /etc/zsh/zshrc && \
     echo '[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh' >> /etc/zsh/zshrc && \
@@ -228,7 +247,7 @@ RUN echo '#!/bin/bash' > /usr/local/bin/workspace-sync-now && \
     echo 'done' >> /usr/local/bin/workspace-sync-now && \
     echo 'exec 9>/run/workspace-sync/lock' >> /usr/local/bin/workspace-sync-now && \
     echo 'if ! flock ${LOCK_FLAG} 9; then exit 0; fi' >> /usr/local/bin/workspace-sync-now && \
-    echo '(cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "lost+found" \) -prune -o -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest.new' >> /usr/local/bin/workspace-sync-now && \
+    echo '(cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "server_state" -o -name "lost+found" \) -prune -o \( ! -type s ! -type p \) -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest.new' >> /usr/local/bin/workspace-sync-now && \
     echo 'if [ -f /run/workspace-sync/manifest ]; then' >> /usr/local/bin/workspace-sync-now && \
     echo '  LC_ALL=C comm -z -23 /run/workspace-sync/manifest /run/workspace-sync/manifest.new > /run/workspace-sync/deleted.list' >> /usr/local/bin/workspace-sync-now && \
     echo '  if [ -s /run/workspace-sync/deleted.list ]; then' >> /usr/local/bin/workspace-sync-now && \
@@ -241,12 +260,12 @@ RUN echo '#!/bin/bash' > /usr/local/bin/workspace-sync-now && \
     echo 'if [ "$FULL_DELETE" -eq 1 ]; then DELETE_FLAG="--delete"; fi' >> /usr/local/bin/workspace-sync-now && \
     echo 'sync_item() {' >> /usr/local/bin/workspace-sync-now && \
     echo '  local rc=0' >> /usr/local/bin/workspace-sync-now && \
-    echo '  rsync -rltDO --inplace --no-perms --no-owner --no-group ${DELETE_FLAG} --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="lost+found" "$1" /mnt/gcs-workspace/ || rc=$?' >> /usr/local/bin/workspace-sync-now && \
+    echo '  rsync -rltO --inplace --no-perms --no-owner --no-group ${DELETE_FLAG} --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="server_state" --exclude="lost+found" "$1" /mnt/gcs-workspace/ || rc=$?' >> /usr/local/bin/workspace-sync-now && \
     echo '  [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]' >> /usr/local/bin/workspace-sync-now && \
     echo '}' >> /usr/local/bin/workspace-sync-now && \
     echo 'export -f sync_item' >> /usr/local/bin/workspace-sync-now && \
     echo 'export DELETE_FLAG' >> /usr/local/bin/workspace-sync-now && \
-    echo 'find /home/workspace -mindepth 1 -maxdepth 1 ! -name "node_modules" ! -name "venv" ! -name ".venv" ! -name "__pycache__" ! -name ".pytest_cache" ! -name ".mypy_cache" ! -name ".ruff_cache" ! -name ".cache" ! -name ".gemini" ! -name ".npm" ! -name ".tmp" ! -name "lost+found" -print0 | xargs -0 -r -P 16 -I {} bash -c "sync_item \"\$1\"" _ "{}"' >> /usr/local/bin/workspace-sync-now && \
+    echo 'find /home/workspace -mindepth 1 -maxdepth 1 ! -name "node_modules" ! -name "venv" ! -name ".venv" ! -name "__pycache__" ! -name ".pytest_cache" ! -name ".mypy_cache" ! -name ".ruff_cache" ! -name ".cache" ! -name ".gemini" ! -name ".npm" ! -name ".tmp" ! -name "server_state" ! -name "lost+found" -print0 | xargs -0 -r -P 16 -I {} bash -c "sync_item \"\$1\"" _ "{}"' >> /usr/local/bin/workspace-sync-now && \
     echo 'mv -f /run/workspace-sync/manifest.new /run/workspace-sync/manifest' >> /usr/local/bin/workspace-sync-now && \
     echo 'chmod 666 /run/workspace-sync/manifest /run/workspace-sync/lock 2>/dev/null || true' >> /usr/local/bin/workspace-sync-now && \
     chmod 755 /usr/local/bin/workspace-sync-now
@@ -284,9 +303,9 @@ RUN mkdir -p /custom-cont-init.d && \
     echo 'chmod 777 /run/workspace-sync 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
     echo 'if grep -qs " /mnt/gcs-workspace " /proc/mounts && ! grep -qs " /home/workspace " /proc/mounts; then' >> /custom-cont-init.d/99-setup-user && \
     echo '  echo "[workspace-init] Hydrating local /home/workspace from /mnt/gcs-workspace (parallel rsync)..."' >> /custom-cont-init.d/99-setup-user && \
-    echo '  if (set -o pipefail; find /mnt/gcs-workspace -mindepth 1 -maxdepth 1 ! -name "node_modules" ! -name "venv" ! -name ".venv" ! -name "__pycache__" ! -name ".pytest_cache" ! -name ".mypy_cache" ! -name ".ruff_cache" ! -name ".cache" ! -name ".gemini" ! -name ".npm" ! -name ".tmp" ! -name "lost+found" -print0 | xargs -0 -r -P 16 -I {} rsync -a --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="lost+found" "{}" /home/workspace/); then' >> /custom-cont-init.d/99-setup-user && \
+    echo '  if (set -o pipefail; find /mnt/gcs-workspace -mindepth 1 -maxdepth 1 ! -name "node_modules" ! -name "venv" ! -name ".venv" ! -name "__pycache__" ! -name ".pytest_cache" ! -name ".mypy_cache" ! -name ".ruff_cache" ! -name ".cache" ! -name ".gemini" ! -name ".npm" ! -name ".tmp" ! -name "server_state" ! -name "lost+found" -print0 | xargs -0 -r -P 16 -I {} rsync -a --no-D --exclude="node_modules" --exclude="venv" --exclude=".venv" --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" --exclude=".ruff_cache" --exclude=".cache" --exclude=".gemini" --exclude=".npm" --exclude=".tmp" --exclude="server_state" --exclude="lost+found" "{}" /home/workspace/); then' >> /custom-cont-init.d/99-setup-user && \
     echo '    for g in /home/workspace/*/.git; do [ -d "$g" ] || continue; r="${g%/.git}"; chmod -R a-x,u+rwX,go+rX "$r"; git -c safe.directory="*" -C "$r" ls-files -s 2>/dev/null | awk '\''$1 == "100755" {print substr($0, 51)}'\'' | xargs -r -I {} chmod +x "$r/{}"; done' >> /custom-cont-init.d/99-setup-user && \
-    echo '    (cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "lost+found" \) -prune -o -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest' >> /custom-cont-init.d/99-setup-user && \
+    echo '    (cd /home/workspace && find . -mindepth 1 \( -name "node_modules" -o -name "venv" -o -name ".venv" -o -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" -o -name ".cache" -o -name ".gemini" -o -name ".npm" -o -name ".tmp" -o -name "server_state" -o -name "lost+found" \) -prune -o \( ! -type s ! -type p \) -print0 | LC_ALL=C sort -z) > /run/workspace-sync/manifest' >> /custom-cont-init.d/99-setup-user && \
     echo '    chmod 666 /run/workspace-sync/manifest 2>/dev/null || true' >> /custom-cont-init.d/99-setup-user && \
     echo '    touch /run/workspace-hydrated' >> /custom-cont-init.d/99-setup-user && \
     echo '    echo "[workspace-init] Hydration complete."' >> /custom-cont-init.d/99-setup-user && \

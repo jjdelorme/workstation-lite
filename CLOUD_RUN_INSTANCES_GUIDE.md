@@ -258,21 +258,16 @@ gcloud alpha run instances ssh vs-codium29-instance \
   --project=jasondel-cloudrun10 \
   --region=us-east4
 ```
-*(Note: The Cloud Run SSH tunnel logs you into the container as `root`. To switch to the standard workstation user `abc` with Oh My Zsh, run `su - abc`.)*
+*(Note: Although Cloud Run's SSH sidecar enters the container as `root` via `/ssh/nsenter.sh`, `/etc/zsh/zshenv` in `templates/Dockerfile.template` automatically intercepts `nsenter.sh` sessions and drops privileges to `abc` via `s6-setuidgid abc` with `HOME=/home/workspace`. If you ever need an explicit `root` shell over SSH, pass `-o SendEnv=LC_SSH_ROOT` with `LC_SSH_ROOT=1`.)*
 
 ### B. Configuring `~/.ssh/config` for Remote IDEs (VS Code & Zed)
 Under the hood, `gcloud alpha run instances ssh` generates a short-lived SSH certificate (`~/.ssh/google_compute_engine_cert/<project>_<region>_instance_<name>-cert.pub`), establishes an IAM-authenticated WebSocket tunnel (`gcloud alpha run start-iap-tunnel`), and connects standard OpenSSH over that tunnel.
 
-First, run the CLI SSH command once so `gcloud` generates your Google Compute Engine SSH keypair (`~/.ssh/google_compute_engine`) and certificate (`~/.ssh/google_compute_engine_cert/...`):
-```bash
-printf "exit\n" | gcloud alpha run instances ssh vs-codium29-instance \
-  --project=jasondel-cloudrun10 \
-  --region=us-east4
-```
-
-Then add the following verified host entry to your local `~/.ssh/config`:
+Add the following verified host entry (including the `Match host` hook that automatically refreshes your short-lived SSH certificate before each connection) to your local `~/.ssh/config`:
 ```sshconfig
-Host cloudrun-workstation
+Match host cloudrun-codium,cloudrun-workstation exec "/home/delormej/.local/share/mise/installs/gcloud/latest/platform/bundledpythonunix/bin/python3 -c 'import sys,argparse; sys.path[:0]=[\"/home/delormej/.local/share/mise/installs/gcloud/latest/lib\",\"/home/delormej/.local/share/mise/installs/gcloud/latest/lib/third_party\"]; from googlecloudsdk.api_lib.run import ssh as r,constants as c; from googlecloudsdk.calliope import base as b; r.Ssh(argparse.Namespace(deployment_name=\"vs-codium29-instance\",project=\"jasondel-cloudrun10\",region=\"us-east4\",instance=None,container=None,revision=None,release_track=b.ReleaseTrack.ALPHA,iap_tunnel_url_override=None),c.WorkloadType.INSTANCE).GetSshCommandComponents()' >/dev/null 2>&1"
+
+Host cloudrun-codium cloudrun-workstation
     HostName cloud-run-default
     User root
     IdentityFile ~/.ssh/google_compute_engine
@@ -284,9 +279,8 @@ Host cloudrun-workstation
     StrictHostKeyChecking no
     UserKnownHostsFile ~/.ssh/google_compute_known_hosts
     ProxyUseFdpass no
-    ProxyCommand gcloud alpha run start-iap-tunnel --project_number=1076242320305 --project_id=jasondel-cloudrun10 --workload_type=instance --deployment_name=vs-codium29-instance --region=us-east4 --iap-tunnel-url-override=wss://us-east4.ssh.run.app/v4
+    ProxyCommand /home/delormej/.local/share/mise/installs/gcloud/latest/platform/bundledpythonunix/bin/python3 /home/delormej/.local/share/mise/installs/gcloud/latest/lib/gcloud.py alpha run start-iap-tunnel --project_number=1076242320305 --project_id=jasondel-cloudrun10 --workload_type=instance --deployment_name=vs-codium29-instance --region=us-east4 --iap-tunnel-url-override=wss://us-east4.ssh.run.app/v4 --verbosity=warning
 ```
-*(Tip: If the short-lived SSH certificate expires later, simply run `gcloud alpha run instances ssh vs-codium29-instance --project=jasondel-cloudrun10 --region=us-east4` once to refresh it.)*
 
 ### C. Connecting with VS Code Remote-SSH
 1. Install the **Remote - SSH** extension (`ms-vscode-remote.remote-ssh`) in VS Code.
