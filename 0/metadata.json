@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.12.2",
+  "checkpoint_id": "01M6A6SEG2DFQSQNHTCC0RRY4K",
+  "session_id": "13f777c5-09f4-4ae5-a426-84eac52238a0",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-01T00:05:16.184780668Z",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "save_step_count": 2,
+  "files_touched": [
+    "CLOUD_RUN_INSTANCES_GUIDE.md",
+    "templates/Dockerfile.template"
+  ],
+  "agent": "Antigravity",
+  "model": "gemini-4-argon-medium",
+  "turn_id": "629e7fdf21b9",
+  "token_usage": {
+    "input_tokens": 67237,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2120684,
+    "output_tokens": 23295,
+    "api_call_count": 45
+  },
+  "redaction": {
+    "replacements": 5,
+    "layers": {
+      "betterleaks": 0,
+      "connection_string": 0,
+      "credential_key": 0,
+      "credential_value": 0,
+      "credentialed_uri": 0,
+      "entropy": 39,
+      "key_context": 0,
+      "provider_token": 0,
+      "shell_stdin": 0
+    }
+  },
+  "session_metrics": {
+    "turn_count": 5
+  }
+}

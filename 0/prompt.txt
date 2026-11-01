@@ -1,0 +1,28 @@
+what do I need to do in order to connect zed via remote to the container instance?
+
+---
+
+cat you write that to my ~/.ssh/config
+
+---
+
+I got this erorr when trying to connect:
+
+failed to connect: You do not currently have this command group installed.  Using it requires the installation of components: [beta]
+Your current Google Cloud CLI version is: 591.0.0 Installing components from version: 591.0.0
+┌─────────────────────────────────────────────┐ │     These components will be installed.     │ ├──────────────────────┬────────────┬─────────┤ │         Name         │  Version   │   Size  │ ├──────────────────────┼────────────┼─────────┤ │ gcloud Beta Commands │ 2026.10.26 │ < 1 MiB │ └──────────────────────┴────────────┴─────────┘
+For the latest full release notes, please visit: https://cloud.google.com/sdk/release_notes
+Once started, canceling this operation may leave your SDK installation in an inconsistent state.
+Do you want to continue (Y/n)?  Please enter ‘y’ or ‘n’:  Connection timed out during banner exchange Connection to UNKNOWN port 65535 timed out.
+
+---
+
+it connects as root, but I need it to connect as user abc... I think that's a known issue? How do I switch users from the zed ssh even thought I think cloud run requires logging in as root, right?
+
+---
+
+push the container image and kick off a new build of the container in the artifact registry
+
+---
+
+commit and push the latest changes
