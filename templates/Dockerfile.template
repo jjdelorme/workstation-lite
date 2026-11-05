@@ -128,104 +128,101 @@ RUN usermod -d /home/workspace -m abc && \
 # 10.5. Install Orchestrator
 RUN pip3 install fastapi uvicorn --break-system-packages && \
     mkdir -p /opt/orchestrator && \
-    cat << 'EOF' > /opt/orchestrator/get_tmux_context.sh
-#!/bin/bash
-# Retrieves all tmux panes and their recent history (last 100 lines)
+    echo '#!/bin/bash' > /opt/orchestrator/get_tmux_context.sh && \
+    echo '# Retrieves all tmux panes and their recent history (last 100 lines)' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo 'panes=$(tmux list-panes -a -F "#{pane_id} | Session: #{session_name} | Window: #{window_name} | Pane Index: #{pane_index} | Top: #{pane_top} | Left: #{pane_left} | Width: #{pane_width} | Height: #{pane_height} | Command: #{pane_current_command} | Path: #{pane_current_path}" 2>/dev/null || echo "No tmux panes found")' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo 'echo "=== TMUX PANES ==="' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo 'echo "$panes"' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo 'echo ""' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo 'if [ "$panes" != "No tmux panes found" ]; then' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '    for pane_id in $(tmux list-panes -a -F "#{pane_id}" 2>/dev/null); do' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        echo "--- PANE $pane_id ---"' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        pane_path=$(tmux display-message -p -t "$pane_id" -F "#{pane_current_path}")' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        echo "Path: $pane_path"' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        ' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        git_branch=$(git -C "$pane_path" branch --show-current 2>/dev/null)' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        if [ -n "$git_branch" ]; then' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '            echo "Git Branch: $git_branch"' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        fi' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        ' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        echo "History (last 100 lines):"' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        tmux capture-pane -p -t "$pane_id" -S -100 2>/dev/null || echo "Could not capture pane $pane_id"' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '        echo ""' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo '    done' >> /opt/orchestrator/get_tmux_context.sh && \
+    echo 'fi' >> /opt/orchestrator/get_tmux_context.sh
 
-panes=$(tmux list-panes -a -F "#{pane_id} | Session: #{session_name} | Window: #{window_name} | Pane Index: #{pane_index} | Top: #{pane_top} | Left: #{pane_left} | Width: #{pane_width} | Height: #{pane_height} | Command: #{pane_current_command} | Path: #{pane_current_path}" 2>/dev/null || echo "No tmux panes found")
-
-echo "=== TMUX PANES ==="
-echo "$panes"
-echo ""
-
-if [ "$panes" != "No tmux panes found" ]; then
-    for pane_id in $(tmux list-panes -a -F "#{pane_id}" 2>/dev/null); do
-        echo "--- PANE $pane_id ---"
-        pane_path=$(tmux display-message -p -t "$pane_id" -F "#{pane_current_path}")
-        echo "Path: $pane_path"
-        
-        git_branch=$(git -C "$pane_path" branch --show-current 2>/dev/null)
-        if [ -n "$git_branch" ]; then
-            echo "Git Branch: $git_branch"
-        fi
-        
-        echo "History (last 100 lines):"
-        tmux capture-pane -p -t "$pane_id" -S -100 2>/dev/null || echo "Could not capture pane $pane_id"
-        echo ""
-    done
-fi
-EOF
-
-RUN cat << 'EOF' > /opt/orchestrator/main.py
-from fastapi import FastAPI, HTTPException
-import subprocess
-import json
-import os
-
-app = FastAPI(title="Tmux Summarizer API")
-
-TMUX_SCRIPT_PATH = "/opt/orchestrator/get_tmux_context.sh"
-
-@app.get("/api/panes")
-async def get_tmux_summaries():
-    try:
-        if not os.path.exists(TMUX_SCRIPT_PATH):
-            raise HTTPException(status_code=500, detail="Tmux summarizer script not found.")
-            
-        tmux_context = subprocess.run(["bash", TMUX_SCRIPT_PATH], capture_output=True, text=True, check=True)
-        raw_output = tmux_context.stdout
-        
-        prompt = f"""
-Using the provided Tmux terminal context, analyze the history of each pane.
-
-For each pane, determine:
-1. "initial_intent": The overall goal or reason this session was started.
-2. "working_directory": The directory path.
-3. "git_branch": The active git branch (or null).
-4. "task_summary": What specific task or process is currently running.
-5. "status": The state of the process (e.g. RUNNING, WAITING, ERROR).
-6. "pane_index": The tmux pane index (e.g. 0, 1, 2).
-7. "layout": An object containing the pane's exact coordinates and dimensions extracted from the header (e.g. {{"top": 0, "left": 84, "width": 158, "height": 42}}). Convert these string values to numbers.
-
-Return a structured JSON array summarizing them. Keys: pane_id, window_name, pane_index, command, status, initial_intent, working_directory, git_branch, task_summary, layout.
-Return ONLY valid JSON array without any markdown formatting.
-
-<tmux_context>
-{raw_output}
-</tmux_context>
-"""
-        
-        command = ["gemini", "-p", prompt, "--output-format", "json"]
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        
-        cli_output = json.loads(result.stdout)
-        response_text = cli_output.get("response", "[]")
-        
-        if response_text.startswith("```json"):
-            response_text = response_text[7:-3].strip()
-        elif response_text.startswith("```"):
-            response_text = response_text[3:-3].strip()
-            
-        panes_data = json.loads(response_text)
-        return {"panes": panes_data}
-
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to execute process: {e.stderr}")
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
-EOF
+RUN echo 'from fastapi import FastAPI, HTTPException' > /opt/orchestrator/main.py && \
+    echo 'import subprocess' >> /opt/orchestrator/main.py && \
+    echo 'import json' >> /opt/orchestrator/main.py && \
+    echo 'import os' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo 'app = FastAPI(title="Tmux Summarizer API")' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo 'TMUX_SCRIPT_PATH = "/opt/orchestrator/get_tmux_context.sh"' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo '@app.get("/api/panes")' >> /opt/orchestrator/main.py && \
+    echo 'async def get_tmux_summaries():' >> /opt/orchestrator/main.py && \
+    echo '    try:' >> /opt/orchestrator/main.py && \
+    echo '        if not os.path.exists(TMUX_SCRIPT_PATH):' >> /opt/orchestrator/main.py && \
+    echo '            raise HTTPException(status_code=500, detail="Tmux summarizer script not found.")' >> /opt/orchestrator/main.py && \
+    echo '            ' >> /opt/orchestrator/main.py && \
+    echo '        tmux_context = subprocess.run(["bash", TMUX_SCRIPT_PATH], capture_output=True, text=True, check=True)' >> /opt/orchestrator/main.py && \
+    echo '        raw_output = tmux_context.stdout' >> /opt/orchestrator/main.py && \
+    echo '        ' >> /opt/orchestrator/main.py && \
+    echo '        prompt = f"""' >> /opt/orchestrator/main.py && \
+    echo 'Using the provided Tmux terminal context, analyze the history of each pane.' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo 'For each pane, determine:' >> /opt/orchestrator/main.py && \
+    echo '1. "initial_intent": The overall goal or reason this session was started.' >> /opt/orchestrator/main.py && \
+    echo '2. "working_directory": The directory path.' >> /opt/orchestrator/main.py && \
+    echo '3. "git_branch": The active git branch (or null).' >> /opt/orchestrator/main.py && \
+    echo '4. "task_summary": What specific task or process is currently running.' >> /opt/orchestrator/main.py && \
+    echo '5. "status": The state of the process (e.g. RUNNING, WAITING, ERROR).' >> /opt/orchestrator/main.py && \
+    echo '6. "pane_index": The tmux pane index (e.g. 0, 1, 2).' >> /opt/orchestrator/main.py && \
+    echo '7. "layout": An object containing the pane'\''s exact coordinates and dimensions extracted from the header (e.g. {{"top": 0, "left": 84, "width": 158, "height": 42}}). Convert these string values to numbers.' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo 'Return a structured JSON array summarizing them. Keys: pane_id, window_name, pane_index, command, status, initial_intent, working_directory, git_branch, task_summary, layout.' >> /opt/orchestrator/main.py && \
+    echo 'Return ONLY valid JSON array without any markdown formatting.' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo '<tmux_context>' >> /opt/orchestrator/main.py && \
+    echo '{raw_output}' >> /opt/orchestrator/main.py && \
+    echo '</tmux_context>' >> /opt/orchestrator/main.py && \
+    echo '"""' >> /opt/orchestrator/main.py && \
+    echo '        ' >> /opt/orchestrator/main.py && \
+    echo '        command = ["gemini", "-p", prompt, "--output-format", "json"]' >> /opt/orchestrator/main.py && \
+    echo '        result = subprocess.run(command, capture_output=True, text=True, check=True)' >> /opt/orchestrator/main.py && \
+    echo '        ' >> /opt/orchestrator/main.py && \
+    echo '        cli_output = json.loads(result.stdout)' >> /opt/orchestrator/main.py && \
+    echo '        response_text = cli_output.get("response", "[]")' >> /opt/orchestrator/main.py && \
+    echo '        ' >> /opt/orchestrator/main.py && \
+    echo '        if response_text.startswith("```json"):' >> /opt/orchestrator/main.py && \
+    echo '            response_text = response_text[7:-3].strip()' >> /opt/orchestrator/main.py && \
+    echo '        elif response_text.startswith("```"):' >> /opt/orchestrator/main.py && \
+    echo '            response_text = response_text[3:-3].strip()' >> /opt/orchestrator/main.py && \
+    echo '            ' >> /opt/orchestrator/main.py && \
+    echo '        panes_data = json.loads(response_text)' >> /opt/orchestrator/main.py && \
+    echo '        return {"panes": panes_data}' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo '    except subprocess.CalledProcessError as e:' >> /opt/orchestrator/main.py && \
+    echo '        raise HTTPException(status_code=500, detail=f"Failed to execute process: {e.stderr}")' >> /opt/orchestrator/main.py && \
+    echo '    except json.JSONDecodeError as e:' >> /opt/orchestrator/main.py && \
+    echo '        raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")' >> /opt/orchestrator/main.py && \
+    echo '    except Exception as e:' >> /opt/orchestrator/main.py && \
+    echo '        raise HTTPException(status_code=500, detail=str(e))' >> /opt/orchestrator/main.py && \
+    echo '' >> /opt/orchestrator/main.py && \
+    echo 'if __name__ == "__main__":' >> /opt/orchestrator/main.py && \
+    echo '    import uvicorn' >> /opt/orchestrator/main.py && \
+    echo '    uvicorn.run(app, host="0.0.0.0", port=8001)' >> /opt/orchestrator/main.py
 
 RUN chmod +x /opt/orchestrator/get_tmux_context.sh && \
     mkdir -p /custom-services.d && \
     echo '#!/usr/bin/with-contenv bash' > /custom-services.d/orchestrator && \
     echo 'exec s6-setuidgid abc uvicorn main:app --host 0.0.0.0 --port 8001 --app-dir /opt/orchestrator' >> /custom-services.d/orchestrator && \
-    chmod 755 /custom-services.d/orchestrator
+    chmod 755 /custom-services.d/orchestrator && \
+    chown -R abc:abc /home/workspace 2>/dev/null || true
 
 # 10.8. Cloud Run Instances Local-Disk + GCS Background Sync Service
 # When a GCS volume is mounted at /mnt/gcs-workspace, /home/workspace runs on fast local disk
