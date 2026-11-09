@@ -1,5 +1,6 @@
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
+fastapi==0.162.2
+starlette==1.10.0
+uvicorn[standard]==0.54.0
 google-cloud-container==2.35.0
 google-cloud-build==3.24.0
 google-cloud-artifact-registry==1.11.1

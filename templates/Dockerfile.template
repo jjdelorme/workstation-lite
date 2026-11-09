@@ -126,7 +126,7 @@ RUN usermod -d /home/workspace -m abc && \
 
 
 # 10.5. Install Orchestrator
-RUN pip3 install fastapi uvicorn --break-system-packages && \
+RUN pip3 install "fastapi>=0.162.2" "starlette>=1.10.0" "uvicorn>=0.54.0" --break-system-packages && \
     mkdir -p /opt/orchestrator && \
     echo '#!/bin/bash' > /opt/orchestrator/get_tmux_context.sh && \
     echo '# Retrieves all tmux panes and their recent history (last 100 lines)' >> /opt/orchestrator/get_tmux_context.sh && \
